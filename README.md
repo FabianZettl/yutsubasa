@@ -13,6 +13,7 @@ H.264 hardware encode).
 | Path | |
 |---|---|
 | `install.sh`, `bin/`, `lib/`, `config/`, `systemd/` | the stack — installs `gaming-launcher`, two Sunshine instances (gaming `:47989` + second screen `:48020`), the udev/PipeWire/Hyprland glue |
+| `src/` | `sunshine-input-bridge` — tiny C daemon (libevdev + Wayland virtual-pointer/keyboard) that forwards the client's mouse/keyboard/touch into the nested session; built by `install.sh` |
 | `docs/` | [architecture](docs/architecture.md), [troubleshooting](docs/troubleshooting.md), the [original brief](docs/original-brief.md) |
 | [`steam-sync/`](steam-sync/) | small PyQt6 tool: scan your Steam library → add games (with cover art) to the gaming instance via `gaming-launcher add-game` |
 
@@ -36,7 +37,9 @@ gaming-launcher gaming
          ├─ capture : wlr-screencopy of HEADLESS-1 → VAAPI encode (/dev/dri/renderD128)
          ├─ prep-cmd: resize HEADLESS-1 to the client's requested resolution/fps
          ├─ audio   : PipeWire null sink  sink-sunshine   → game audio never hits speakers
-         └─ input   : virtual gamepad for the stream; desktop controller endpoints disabled
+         └─ input   : gamepad → Steam Input (EVIOCGRAB);  mouse/kbd/touch →
+                      sunshine-input-bridge → nested Sway (desktop Hyprland
+                      ignores the passthrough devices via a managed hl.device rule)
                                     │  LAN
                           Moonlight / Artemis
 ```
@@ -77,7 +80,9 @@ service — the two cannot stream at the same time (shared ports).
 ### Manual finish (if `sudo` wasn't available during install)
 
 ```sh
-sudo pacman -S --needed sway sunshine gamescope jq libva-utils libva-mesa-driver dbus
+sudo pacman -S --needed sway sunshine gamescope jq libva-utils libva-mesa-driver dbus \
+     gcc pkgconf wayland libevdev libxkbcommon        # build sunshine-input-bridge
+make -C src && cp src/sunshine-input-bridge ~/.local/bin/
 sudo cp config/udev/71-gaming-controllers.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
 ./install.sh            # re-run to pick up the rest
@@ -145,6 +150,27 @@ gaming-launcher add-game "Celeste" steam:504230
 # cover art is pulled from your Steam library automatically;
 # restart the session so Sunshine reloads its app list
 ```
+
+### Client mouse / keyboard / touch
+
+Sunshine injects client input through **global uinput devices**; a headless
+nested compositor can't see them, so by default the *desktop* grabs them. On
+client-connect the launcher:
+
+- starts **`sunshine-input-bridge`** (from `src/`) — reads those evdev nodes and
+  replays them into the nested Sway via `zwlr_virtual_pointer_v1` /
+  `zwp_virtual_keyboard_v1`;
+- writes a managed **`hl.device{ enabled = false }`** rule
+  (`~/.config/hypr/gaming-setup-input.lua`, loaded from `hyprland.lua`) so the
+  desktop Hyprland ignores the passthrough devices for the duration;
+- **suspends the second-screen instance** (both instances make identical
+  passthrough devices — only one can own the client pointer) and restarts it on
+  disconnect.
+
+All three are undone on disconnect. The gamepad path is unchanged — Steam Input
+`EVIOCGRAB`s the `js` node directly. Keyboard layout follows the desktop's
+`input:kb_layout`; override with `kb_layout` in `gaming-setup.conf [general]`.
+Needs `input_isolation = true` in the active quality profile (the default).
 
 ### Second screen — one instance, three apps (port 48020)
 

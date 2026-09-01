@@ -1,0 +1,15 @@
+-- gaming-launcher: client-input isolation for the desktop Hyprland (managed).
+--
+-- Sunshine injects the streaming client's mouse / keyboard / touch through
+-- GLOBAL uinput devices ("Mouse passthrough", "Keyboard passthrough", ...).
+-- While a gaming stream is connected, `gaming-launcher` rewrites the block
+-- below so this Hyprland IGNORES those devices; `sunshine-input-bridge`
+-- forwards their events into the nested headless Sway session instead, so the
+-- client drives the game and not your desktop cursor.
+--
+-- Loaded from hyprland.lua via
+--   pcall(dofile, os.getenv("HOME") .. "/.config/hypr/gaming-setup-input.lua")
+-- Do not edit between the markers - the launcher overwrites this region.
+-- BEGIN gaming-launcher input
+-- (inactive)
+-- END gaming-launcher input

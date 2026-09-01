@@ -76,11 +76,34 @@ systemctl --user restart pipewire wireplumber pipewire-pulse
 This stack never edits PipeWire's own config, so it is not the cause — check for
 a stray file in `~/.config/pipewire/`.
 
-## Controller
+## Input (mouse / keyboard / controller)
+
+### How client input reaches the game
+
+Sunshine injects the client's mouse / keyboard / touch through **global uinput
+devices** (`Mouse passthrough`, `Keyboard passthrough`, …). The nested headless
+Sway has no libinput backend, so on its own the **desktop** Hyprland grabs those
+devices and the client ends up moving your desktop cursor. The fix has two
+halves, both toggled on client-connect by `session-prep`:
+
+1. **`sunshine-input-bridge`** (compiled from `src/`, started by `input_isolate`)
+   reads the gaming instance's passthrough evdev nodes and replays them into the
+   nested Sway via `zwlr_virtual_pointer_v1` / `zwp_virtual_keyboard_v1`.
+2. A managed **`hl.device{ enabled = false }`** rule
+   (`~/.config/hypr/gaming-setup-input.lua`, loaded from `hyprland.lua`) makes
+   the desktop Hyprland ignore the same devices for the duration.
+
+Because both Sunshine instances create byte-identical passthrough devices, the
+**second-screen instance is auto-suspended** while a gaming stream is connected
+and restarted on disconnect (`gaming-launcher status` shows it).
 
 | Symptom | Cause / fix |
 |---|---|
-| pad moves the **desktop** cursor / types while streaming | a DS4/DS5 touchpad or Steam-Controller mouse endpoint. `gaming-launcher status` lists endpoints it disabled; `input_release` re-enables on stop. If one was missed, add its name substring to `_INPUT_PAD_PAT` in `lib/input.sh` |
+| client mouse/keyboard moves the **desktop**, not the game | bridge not built or Lua rule not loaded. `gaming-launcher troubleshoot input`; `make -C src`; run `./install.sh` so `hyprland.lua` gets the `gaming-setup-input.lua` dofile line; check `~/.local/state/gaming-launcher/input-bridge.log` |
+| keyboard types the wrong characters in-game | bridge keymap ≠ your layout. Set `kb_layout` in `gaming-setup.conf [general]` (else it copies the desktop `input:kb_layout`, falling back to `us`) |
+| `input_isolation = false` in the active profile | then neither half runs — client input intentionally goes to the desktop. Use a profile with `input_isolation = true` |
+| second screen won't come back after a stream | `gaming-launcher status`; `systemctl --user start sunshine-screen.service`. If you started it by hand, re-run `gaming-launcher secondscreen on` |
+| pad moves the **desktop** cursor / types while streaming | a DS4/DS5 touchpad or Steam-Controller mouse endpoint — that's a real controller, not the bridge. The gamepad axes themselves reach the game via Steam Input's `EVIOCGRAB`; extra pointer/keyboard endpoints are covered by the same `hl.device` block |
 | pad does nothing **in the game** | Steam Input off, or desktop Steam grabbed it first. Enable Steam Input for the title; **don't run desktop Steam while a session is up** (`/dev/input/js*` is global) |
 | pad not detected at all | `gaming-launcher troubleshoot input`; check `/dev/uinput` exists, you're in `input` group, udev rule installed (`ls /etc/udev/rules.d/71-gaming-controllers.rules`), then `sudo udevadm trigger --subsystem-match=input` |
 | virtual pad from Moonlight missing | Sunshine `gamepad = auto`; `/dev/uinput` writable; re-pair client |

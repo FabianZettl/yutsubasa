@@ -34,6 +34,11 @@ GL_SESSION_LOG="$GL_STATE_DIR/session.log"
 
 GL_WAYLAND_DISPLAY="wayland-gaming"
 
+# Managed Lua rule that makes the *desktop* Hyprland ignore Sunshine's virtual
+# input devices while a gaming stream is connected (their events are forwarded
+# into the nested session by sunshine-input-bridge instead).
+GL_INPUT_LUA="${XDG_CONFIG_HOME}/hypr/gaming-setup-input.lua"
+
 mkdir -p "$GL_STATE_DIR" "$GL_RUN_DIR" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -180,4 +185,26 @@ SUNSHINE_BIN()      {
     local b; b=$(gl_cfg general sunshine_bin "")
     [[ -n "$b" ]] || b=$(command -v sunshine || echo sunshine)
     printf '%s' "$b"
+}
+
+# The compiled evdev -> Wayland virtual-input forwarder (built from src/).
+INPUT_BRIDGE_BIN() {
+    local b d
+    b=$(gl_cfg general input_bridge_bin "")
+    [[ -n "$b" ]] || b=$(command -v sunshine-input-bridge 2>/dev/null || true)
+    if [[ -z "$b" ]]; then
+        for d in "$GL_ROOT/build" "$GL_ROOT/src" "$HOME/.local/bin" /usr/local/bin; do
+            [[ -x "$d/sunshine-input-bridge" ]] && { b="$d/sunshine-input-bridge"; break; }
+        done
+    fi
+    printf '%s' "${b:-$GL_ROOT/build/sunshine-input-bridge}"
+}
+
+# `systemctl --user` that still reaches the *login* user manager even when we
+# are called from inside the nested session's private bus (dbus-run-session
+# rewrites DBUS_SESSION_BUS_ADDRESS).
+user_systemctl() {
+    DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus" \
+    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+        systemctl --user "$@"
 }

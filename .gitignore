@@ -5,5 +5,11 @@ venv/
 build/
 dist/
 *.spec
+
+# input bridge: compiled binary + wayland-scanner output
+/src/sunshine-input-bridge
+/src/*-protocol.c
+/src/*-client-protocol.h
+*.o
 *.swp
 .DS_Store

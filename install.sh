@@ -45,12 +45,17 @@ if (( UNINSTALL )); then
     run systemctl --user daemon-reload 2>/dev/null || true
     [[ -L /usr/local/bin/gaming-launcher ]] && sudo_run rm -f /usr/local/bin/gaming-launcher
     [[ -L "$HOME/.local/bin/gaming-launcher" ]] && rm -f "$HOME/.local/bin/gaming-launcher"
+    for p in /usr/local/bin/sunshine-input-bridge "$HOME/.local/bin/sunshine-input-bridge"; do
+        [[ -e "$p" ]] && { [[ -w "$(dirname "$p")" ]] && run rm -f "$p" || sudo_run rm -f "$p"; }
+    done
+    run make -C "$REPO/src" clean 2>/dev/null || true
     [[ -e "$UDEV_RULE" ]] && { sudo_run rm -f "$UDEV_RULE"; sudo_run udevadm control --reload; }
     [[ -e /etc/pacman.d/hooks/sunshine-setcap.hook ]] && sudo_run rm -f /etc/pacman.d/hooks/sunshine-setcap.hook
-    if [[ -f "$XDG_CONFIG_HOME/hypr/hyprland.lua" ]] && grep -q 'gaming-setup-display' "$XDG_CONFIG_HOME/hypr/hyprland.lua"; then
-        run sed -i '/gaming-launcher: second-display/,+1d' "$XDG_CONFIG_HOME/hypr/hyprland.lua"
-        run rm -f "$XDG_CONFIG_HOME/hypr/gaming-setup-display.lua"
-        warn "removed the second-screen require line from hyprland.lua"
+    if [[ -f "$XDG_CONFIG_HOME/hypr/hyprland.lua" ]] && grep -qE 'gaming-setup-(display|input)' "$XDG_CONFIG_HOME/hypr/hyprland.lua"; then
+        run sed -i -E '/gaming-launcher \(managed\)/d; /gaming-launcher: second-display/d; /gaming-setup-(display|input)\.lua/d' \
+            "$XDG_CONFIG_HOME/hypr/hyprland.lua"
+        run rm -f "$XDG_CONFIG_HOME/hypr/gaming-setup-display.lua" "$XDG_CONFIG_HOME/hypr/gaming-setup-input.lua"
+        warn "removed the gaming-launcher dofile lines from hyprland.lua"
     fi
     run rm -f "$HOME/.config/fish/completions/gaming-launcher.fish" \
               "$HOME/.local/share/bash-completion/completions/gaming-launcher"
@@ -75,13 +80,16 @@ declare -A PKG=(
   [sunshine]=sunshine [pipewire]=pipewire [wireplumber]=wireplumber
   [pw-loopback]=pipewire [vainfo]=libva-utils [dbus-run-session]=dbus
   [pactl]=libpulse [swaybg]=swaybg
+  [cc]=gcc [wayland-scanner]=wayland [pkg-config]=pkgconf   # input bridge build
 )
 missing=()
 for cmd in "${!PKG[@]}"; do
     have "$cmd" || missing+=("${PKG[$cmd]}")
 done
-# mesa vaapi driver has no binary to probe for
+# libraries with no binary to probe for
 pacman -Q libva-mesa-driver >/dev/null 2>&1 || missing+=(libva-mesa-driver)
+pacman -Q libevdev         >/dev/null 2>&1 || missing+=(libevdev)      # input bridge
+pacman -Q libxkbcommon     >/dev/null 2>&1 || missing+=(libxkbcommon)  # input bridge
 if ((${#missing[@]})); then
     mapfile -t missing < <(printf '%s\n' "${missing[@]}" | sort -u | sed '/^$/d')
 fi
@@ -184,25 +192,41 @@ if have es-de && [[ -e "$SUN/apps.json" ]] && ! grep -q '"ES-DE"' "$SUN/apps.jso
     fi
 fi
 
-# second-display mode: managed Lua rule + a require line in the user's config
+# desktop Hyprland integration: two managed Lua rules loaded from hyprland.lua
+#   gaming-setup-display.lua  - size/disable monitors for `secondscreen`
+#   gaming-setup-input.lua    - ignore Sunshine's passthrough input devices
+#                               while a gaming stream is connected
 HYPR_LUA="$XDG_CONFIG_HOME/hypr/hyprland.lua"
 DISPLAY_LUA="$XDG_CONFIG_HOME/hypr/gaming-setup-display.lua"
+INPUT_LUA="$XDG_CONFIG_HOME/hypr/gaming-setup-input.lua"
+
+_ensure_dofile() {   # $1 = lua basename ; appends a pcall(dofile,...) line once
+    grep -q "$1" "$HYPR_LUA" && { good "hyprland.lua already loads $1"; return 0; }
+    if (( CHECK )); then printf '  %s(would)%s add dofile(%s) to hyprland.lua\n' "$c_d" "$c_0" "$1"; return 0; fi
+    [[ -f "$HYPR_LUA.pre-gaming-setup.bak" ]] || cp "$HYPR_LUA" "$HYPR_LUA.pre-gaming-setup.bak"
+    printf '\n-- gaming-launcher (managed)\npcall(dofile, os.getenv("HOME") .. "/.config/hypr/%s")\n' "$1" >>"$HYPR_LUA"
+    good "appended dofile($1) to hyprland.lua"
+}
+
 if [[ -f "$HYPR_LUA" ]]; then
     install_keep "$REPO/config/hypr/gaming-setup-display.lua" "$DISPLAY_LUA"
-    if grep -q 'gaming-setup-display' "$HYPR_LUA"; then
-        good "hyprland.lua already loads gaming-setup-display.lua"
+    install_keep "$REPO/config/hypr/gaming-setup-input.lua"   "$INPUT_LUA"
+    if grep -q 'gaming-setup-display' "$HYPR_LUA" && grep -q 'gaming-setup-input' "$HYPR_LUA"; then
+        good "hyprland.lua already loads both gaming-setup Lua rules"
     elif (( CHECK )); then
-        printf '  %s(would)%s add dofile(gaming-setup-display.lua) to %s\n' "$c_d" "$c_0" "$HYPR_LUA"
-    elif ask "add a line to hyprland.lua so 'gaming-launcher secondscreen' can size the 2nd monitor?"; then
-        cp "$HYPR_LUA" "$HYPR_LUA.pre-gaming-setup.bak"
-        printf '\n-- gaming-launcher: second-display monitor rule (managed)\npcall(dofile, os.getenv("HOME") .. "/.config/hypr/gaming-setup-display.lua")\n' >>"$HYPR_LUA"
-        good "appended to hyprland.lua (backup: $(basename "$HYPR_LUA").pre-gaming-setup.bak)"
+        _ensure_dofile "gaming-setup-display.lua"; _ensure_dofile "gaming-setup-input.lua"
+    elif ask "add 2 lines to hyprland.lua (size the 2nd monitor + isolate client input during a stream)?"; then
+        _ensure_dofile "gaming-setup-display.lua"
+        _ensure_dofile "gaming-setup-input.lua"
+        good "backup: $(basename "$HYPR_LUA").pre-gaming-setup.bak"
     else
-        warn "skipped - 'gaming-launcher secondscreen' still works but the 2nd monitor stays 1080p/scale-2"
-        warn "add this to hyprland.lua yourself: pcall(dofile, os.getenv(\"HOME\")..\"/.config/hypr/gaming-setup-display.lua\")"
+        warn "skipped - add these to hyprland.lua yourself:"
+        warn "  pcall(dofile, os.getenv(\"HOME\")..\"/.config/hypr/gaming-setup-display.lua\")"
+        warn "  pcall(dofile, os.getenv(\"HOME\")..\"/.config/hypr/gaming-setup-input.lua\")"
+        warn "without the input line the streaming client's mouse will move your DESKTOP cursor"
     fi
 else
-    warn "no ~/.config/hypr/hyprland.lua - skipping second-display integration"
+    warn "no ~/.config/hypr/hyprland.lua - skipping desktop Hyprland integration"
 fi
 
 # ---------------------------------------------------------------------------
@@ -228,6 +252,29 @@ else
     # re-render sunshine.conf/apps.json so @LAUNCHER@ points at the fallback path
     render "$REPO/config/sunshine/sunshine.conf.in" "$SUN/sunshine.conf"
     render "$REPO/config/sunshine/apps.json.in" "$SUN/apps.json"
+fi
+
+# ---------------------------------------------------------------------------
+say "5b/8  input bridge (evdev -> Wayland virtual input)"
+BRIDGE_SRC="$REPO/src/sunshine-input-bridge"
+if (( CHECK )); then
+    printf '  %s(would)%s make -C %s  &&  install to %s\n' "$c_d" "$c_0" "$REPO/src" "$(dirname "$BIN_LINK")"
+elif have cc && have wayland-scanner && pkg-config --exists wayland-client libevdev xkbcommon 2>/dev/null; then
+    if make -C "$REPO/src" >/dev/null 2>&1 && [[ -x "$BRIDGE_SRC" ]]; then
+        BR_DST="$(dirname "$BIN_LINK")/sunshine-input-bridge"
+        if cp "$BRIDGE_SRC" "$BR_DST" 2>/dev/null; then good "built + installed sunshine-input-bridge -> $BR_DST"
+        elif sudo -n cp "$BRIDGE_SRC" "$BR_DST" 2>/dev/null; then good "built + installed -> $BR_DST (sudo)"
+        else
+            mkdir -p "$HOME/.local/bin" && cp "$BRIDGE_SRC" "$HOME/.local/bin/" \
+                && good "built sunshine-input-bridge -> ~/.local/bin (launcher auto-finds it)"
+        fi
+    else
+        warn "input bridge build failed - run 'make -C $REPO/src' by hand"
+        warn "(without it the streaming client's mouse/keyboard moves the DESKTOP, not the game)"
+    fi
+else
+    warn "missing build tools (cc / wayland-scanner / libevdev / xkbcommon) - input bridge NOT built"
+    warn "the launcher still runs from $REPO/src if you 'make -C $REPO/src' later"
 fi
 
 # ---------------------------------------------------------------------------

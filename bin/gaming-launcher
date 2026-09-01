@@ -392,6 +392,36 @@ _scr_teardown() {
     [[ "$quiet" == quiet ]] || ok "second screen removed"
 }
 
+# --- second screen vs. gaming: only one may own the client's pointer --------
+# Both Sunshine instances create byte-identical "Mouse/Keyboard passthrough"
+# uinput devices. While a gaming stream is connected the launcher forwards the
+# gaming instance's devices into the nested session and makes the desktop
+# ignore *all* passthrough devices by name - so the second-screen instance has
+# to stand down for the duration.
+_secondscreen_suspend() {
+    pgrep -f "$SCR_PAT" >/dev/null || return 0
+    if user_systemctl is-active --quiet sunshine-screen.service 2>/dev/null; then
+        state_set scr_suspended service
+        user_systemctl stop sunshine-screen.service >/dev/null 2>&1 || true
+    else
+        state_set scr_suspended manual
+        pkill -TERM -f "$SCR_PAT" 2>/dev/null || true
+    fi
+    wait_for 40 bash -c "! pgrep -f '$SCR_PAT' >/dev/null" || true
+    _hc output remove "$SCR_HEADLESS" >/dev/null 2>&1 || true
+    info "second screen (:48020) suspended while the gaming stream owns input"
+}
+_secondscreen_resume() {
+    local how; how=$(state_get .scr_suspended)
+    [[ -n "$how" && "$how" != null ]] || return 0
+    state_unset scr_suspended
+    case "$how" in
+        service) user_systemctl start sunshine-screen.service >/dev/null 2>&1 \
+                    && info "second screen (:48020) resumed" ;;
+        manual)  warn "second screen was started by hand - re-run: gaming-launcher secondscreen on" ;;
+    esac
+}
+
 # ---- per-Moonlight-app do/undo --------------------------------------------
 # One instance (output_name = GL-SCREEN). GL-SCREEN present -> Sunshine captures
 # it; absent -> Sunshine falls back to the primary monitor.
@@ -464,6 +494,8 @@ cmd_stop() {
     if [[ -n "$(state_get .scr_kind)" ]] || pgrep -f "$SCR_PAT" >/dev/null; then
         _scr_teardown
     fi
+    # deliberate stop: don't let session_down auto-resume the second screen
+    state_unset scr_suspended 2>/dev/null || true
     _adapter disable >/dev/null 2>&1 || true
     if session_active || [[ -S "$GL_SWAY_SOCK" ]]; then
         if systemctl --user is-active --quiet sunshine-gaming.service 2>/dev/null; then
@@ -516,6 +548,9 @@ cmd_status() {
     _vcn_load | sed 's/^/  /'
     echo "$line"
     have swaymsg && session_active && input_status | sed 's/^/  /'
+    if [[ -n "$(state_get .scr_suspended)" && "$(state_get .scr_suspended)" != null ]]; then
+        printf '  \e[2mSecond screen: suspended (:48020) while the gaming stream owns input\e[0m\n'
+    fi
     echo "$line"
     if pgrep -x polaris >/dev/null; then
         printf '  \e[33mnote\e[0m: polaris is running - it will clash on the default ports\n'
@@ -669,6 +704,14 @@ cmd_troubleshoot() {
         _t "uinput node";            [[ -e /dev/uinput ]] && _ok || _no "modprobe uinput"
         _t "in 'input' group";       id -nG | grep -qw input && _ok || _wn "usermod -aG input $USER; re-login"
         _t "udev rule installed";    [[ -e /etc/udev/rules.d/71-gaming-controllers.rules ]] && _ok || _wn "./install.sh installs it"
+        _t "input bridge built";     [[ -x "$(INPUT_BRIDGE_BIN)" ]] && _ok || _no "make -C \"$GL_ROOT/src\" (client mouse hits the desktop without it)"
+        _t "hyprland.lua loads input rule"
+        grep -q 'gaming-setup-input' "$HOME/.config/hypr/hyprland.lua" 2>/dev/null && _ok || _wn "./install.sh (adds the pcall dofile line)"
+        if session_active; then
+            _t "bridge running now"
+            [[ -f "$GL_RUN_DIR/input-bridge.pid" ]] && kill -0 "$(<"$GL_RUN_DIR/input-bridge.pid")" 2>/dev/null \
+                && _ok || printf ' \e[2m(only while a client is connected)\e[0m\n'
+        fi
     fi
     if [[ "$what" =~ ^(all|latency)$ ]]; then
         _t "session up";             session_active && _ok || _wn "start one: gaming-launcher gaming"
@@ -774,7 +817,10 @@ cmd_session_prep() {
     if [[ "$(quality_field "$prof" audio_isolation true)" == true ]]; then
         audio_pin_start || true   # keep desktop apps (Brave, …) on the real sink
     fi
-    [[ "$(quality_field "$prof" input_isolation true)" == true ]] && input_isolate || true
+    if [[ "$(quality_field "$prof" input_isolation true)" == true ]]; then
+        _secondscreen_suspend      # only one instance may own the client pointer
+        input_isolate || true      # desktop ignores passthrough devs + bridge -> session
+    fi
     [[ "$(gl_cfg adapter enabled false)" == true ]] && _adapter enable || true
     true
 }
@@ -785,6 +831,7 @@ cmd_session_postp() {
     audio_pin_stop || true
     audio_restore_default || true
     input_release || true
+    _secondscreen_resume || true
     _adapter disable >/dev/null 2>&1 || true
     state_unset active_app
     true

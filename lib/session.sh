@@ -176,7 +176,10 @@ session_down() {
     audio_pin_stop || true
     audio_restore_default || true
     input_release || true
-    state_unset sway_pid wl_display wayland_display sunshine_pid width height fps active_app real_default_sink
+    # if the whole session went down (crash or `stop`), bring the second screen
+    # back unless `cmd_stop` already cleared the flag on a deliberate teardown.
+    command -v _secondscreen_resume >/dev/null && _secondscreen_resume || true
+    state_unset sway_pid wl_display wayland_display sunshine_pid width height fps active_app real_default_sink scr_suspended
     [[ "$(state_get .mode)" == gaming ]] && state_unset mode
     ok "session stopped; desktop untouched"
 }

@@ -23,8 +23,17 @@ flowchart LR
     end
     ENC -- "LAN / ENet+RTP" --> CL["Moonlight / Artemis\n(laptop / handheld / TV)"]
     CL -- "input events" --> SUN
-    SUN -- "uinput virtual pad/kbd/mouse" --> GAME
+    SUN -- "uinput: js* (gamepad)" --> GAME
+    SUN -- "uinput: Mouse/Keyboard passthrough" --> BR["sunshine-input-bridge"]
+    BR -- "zwlr_virtual_pointer / zwp_virtual_keyboard" --> SW
 ```
+
+Gamepad axes reach the game directly (Steam Input `EVIOCGRAB`s the `js` node).
+Mouse/keyboard/touch can't — a headless wlroots compositor has no libinput
+backend, so `sunshine-input-bridge` reads those evdev nodes and replays them into
+the nested Sway over the Wayland virtual-input protocols. Meanwhile a managed
+`hl.device{ enabled = false }` rule makes the **desktop** Hyprland ignore the
+passthrough devices so the client doesn't drive both.
 
 ## Lifecycle / state machine
 
@@ -32,8 +41,8 @@ flowchart LR
 stateDiagram-v2
     [*] --> Down
     Down --> Up : gaming-launcher gaming\n(systemd: sunshine-gaming.service → session-run)
-    Up --> Streaming : Moonlight connects\nSunshine global_prep_cmd "do" → session-prep\n  · HEADLESS-1 mode = client W×H@FPS (clamped)\n  · input_isolate (desktop pad endpoints off)\n  · audio sink assured
-    Streaming --> Up : client disconnects\nglobal_prep_cmd "undo" → session-postp\n  · desktop default sink restored\n  · input_release
+    Up --> Streaming : Moonlight connects\nSunshine global_prep_cmd "do" → session-prep\n  · HEADLESS-1 mode = client W×H@FPS (clamped)\n  · second-screen instance suspended\n  · input_isolate: desktop ignores passthrough devs + start input-bridge\n  · audio sink assured
+    Streaming --> Up : client disconnects\nglobal_prep_cmd "undo" → session-postp\n  · desktop default sink restored\n  · input_release (stop bridge, re-enable devs)\n  · second-screen instance resumed
     Up --> Down : gaming-launcher stop\n  · swaymsg exit, reap Steam helpers\n  · null sink stays (persistent service)
     Streaming --> Down : gaming-launcher stop
     Up --> Up : gaming-launcher quality <profile>\n  · rewrite av1_mode/hevc_mode\n  · re-apply HEADLESS-1 mode
@@ -60,7 +69,8 @@ stateDiagram-v2
 | `bin/gaming-launcher` | CLI + lifecycle hooks (`session-run`, `session-prep`, `session-postp`) |
 | `lib/session.sh` | start/stop headless Sway, start Sunshine in-session, `session_set_mode` |
 | `lib/audio.sh` | null-sink assurance, restore desktop default, headset loopback |
-| `lib/input.sh` | disable/re-enable controller pointer/keyboard endpoints on the desktop Hyprland |
+| `lib/input.sh` | on connect: managed `hl.device{enabled=false}` so the desktop ignores Sunshine's passthrough devices + start `sunshine-input-bridge` into the nested Sway; undo on disconnect |
+| `src/sunshine-input-bridge.c` | libevdev → `zwlr_virtual_pointer_v1` / `zwp_virtual_keyboard_v1` forwarder (built to `sunshine-input-bridge`) |
 | `lib/quality.sh` | profile resolve/apply, gamescope arg builder, up/down steps |
 | `lib/steam.sh` | `.acf` library scan, AppID resolve, Big Picture command |
 | `lib/common.sh` | logging, INI reader, JSON state file, defaults |
