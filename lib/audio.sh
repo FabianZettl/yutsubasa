@@ -67,28 +67,19 @@ audio_restore_default() {
 # the stream is up, and does one initial sweep of already-migrated inputs.
 # The in-session game is unaffected: it targets the null sink via PULSE_SINK.
 
-# _pid_in_session <pid>  - true if <pid> belongs to the gaming session.
-# Checks the process ENVIRONMENT, not the process tree: ES-DE (and other
-# frontends) detach emulators so they reparent to systemd, but the inherited
-# env survives. `_GL_SESSION=1` is exported for everything under the session
-# (see lib/session.sh session_env + the Sunshine `gsway exec` wrapper).
-_pid_in_session() {
-    local p="${1:-}" wl
-    [[ "$p" =~ ^[0-9]+$ ]] || return 1
-    grep -qzs '_GL_SESSION=1' "/proc/$p/environ" && return 0
-    wl=$(state_get .wl_display)
-    [[ -n "$wl" && "$wl" != null ]] && grep -qzs "WAYLAND_DISPLAY=$wl" "/proc/$p/environ"
-}
-
-# audio_reconcile - enforce the routing rule once. Called on every PipeWire event
-# by the watcher, and directly for tests.
-#   default sink                         -> the REAL device (counters Sunshine's
-#                                           hijack; desktop apps stay put/safe)
-#   sink-input FROM the session (game / ES-DE / native emulator) not yet on the
-#     null sink                          -> move to the null sink  (= streamed)
-#   sink-input NOT from the session, sitting on the null sink -> move to real
-#   PID-less inputs are left alone
-_DESKTOP_APPS='brave|firefox|chromium|chrome|google-chrome|discord|webcord|vesktop|telegram|signal|element|slack|thunderbird|spotify|code|obs|mpv|vlc|zoom|teams'
+# audio_reconcile - enforce ONE routing rule, decided purely by which session a
+# stream's owning process runs in. Called on every PipeWire event by the watcher,
+# and directly for tests.
+#
+#   In the nested Sway session  ->  sink-sunshine   (captured by Sunshine)
+#   Anything else (the main Hyprland desktop: vscodium, Brave, ...)
+#                               ->  the real default device (USB DAC)
+#
+# "In the session" = the owning PID is in the Sway window-tree PID set (+ all
+# descendants) OR carries the inherited env marker (_GL_SESSION=1 / the session's
+# WAYLAND_DISPLAY) - covers ES-DE detaching an emulator to systemd and
+# unreadable /proc/<pid>/environ. No app-name lists, no "assume streamed"
+# fallback: if it can't be shown to be in the session, it's desktop audio.
 
 # PIDs that belong to the isolated gaming session: every window Sway shows +
 # all their descendants. Survives ES-DE detaching an emulator to systemd (the
@@ -125,10 +116,11 @@ audio_reconcile() {
 
     [[ "$(pactl get-default-sink 2>/dev/null)" != "$real" ]] && pactl set-default-sink "$real" 2>/dev/null
 
+    # session PID set (Sway window tree + descendants), computed once per sweep.
     local sessset; sessset=" $(_session_pid_set | tr '\n' ' ') "
-    local game_active=0
-    [[ -n "$(state_get .active_app)" && "$(state_get .active_app)" != null ]] && game_active=1
+    local wl; wl=$(state_get .wl_display); [[ "$wl" == null ]] && wl=""
 
+    # client.id -> pid map, for sink-inputs without application.process.id.
     local cpid=""
     if have pw-dump && have jq; then
         cpid=$(pw-dump 2>/dev/null | jq -r '
@@ -136,29 +128,25 @@ audio_reconcile() {
             | "\(.id) \(.info.props["pipewire.sec.pid"] // "")"' 2>/dev/null)
     fi
 
-    local id si apid cid nm bin pid verdict
+    # _in_session <pid> : the one test that decides routing.
+    _in_session() {
+        local p=$1
+        [[ "$p" =~ ^[0-9]+$ ]] || return 1
+        [[ "$sessset" == *" $p "* ]] && return 0
+        grep -qzs '_GL_SESSION=1' "/proc/$p/environ" 2>/dev/null && return 0
+        [[ -n "$wl" ]] && grep -qzs "WAYLAND_DISPLAY=$wl" "/proc/$p/environ" 2>/dev/null
+    }
+
+    local id si apid cid nm bin pid
     while IFS='|' read -r id si apid cid nm bin; do
         [[ -n "$id" ]] || continue
         pid="$apid"; [[ "$pid" =~ ^[0-9]+$ ]] || pid=$(awk -v c="$cid" '$1==c{print $2; exit}' <<<"$cpid")
 
-        verdict=unknown
-        if [[ "$pid" =~ ^[0-9]+$ && "$sessset" == *" $pid "* ]]; then
-            verdict=session
-        elif [[ "$pid" =~ ^[0-9]+$ ]] && grep -qzs '_GL_SESSION=1' "/proc/$pid/environ" 2>/dev/null; then
-            verdict=session
-        elif [[ "${nm,,}" =~ ^($_DESKTOP_APPS)$ || "${bin,,}" =~ ($_DESKTOP_APPS) ]]; then
-            verdict=desktop
-        elif [[ "$pid" =~ ^[0-9]+$ && -r "/proc/$pid/environ" ]]; then
-            # environ readable and no session marker -> a normal desktop app
-            verdict=desktop
+        if _in_session "$pid"; then
+            _is_null "$si" || pactl move-sink-input "$id" "$sink" 2>/dev/null   # -> streamed
+        else
+            _is_null "$si" && pactl move-sink-input "$id" "$real" 2>/dev/null   # -> real device
         fi
-
-        case "$verdict" in
-            session)  _is_null "$si" || pactl move-sink-input "$id" "$sink" 2>/dev/null ;;
-            desktop)  _is_null "$si" && pactl move-sink-input "$id" "$real" 2>/dev/null ;;
-            unknown)  # a game is streaming and we can't prove it's desktop -> assume session
-                      (( game_active )) && { _is_null "$si" || pactl move-sink-input "$id" "$sink" 2>/dev/null; } ;;
-        esac
     done < <(pactl list sink-inputs 2>/dev/null | awk '
         function flush(){ if(id!="") print id"|"si"|"apid"|"cid"|"nm"|"bin; id="";si="";apid="";cid="";nm="";bin="" }
         /^Sink Input #/               { flush(); id=substr($3,2) }
