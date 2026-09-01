@@ -1,0 +1,48 @@
+# Sunshine config for "second screen" mode (gaming-launcher secondscreen on).
+# Rendered by gaming-launcher to @CONFDIR@/sunshine-display.conf.
+#
+# Runs inside the *desktop* Hyprland session (no isolation) and captures the
+# headless output the launcher created on that session. Audio is muted for the
+# client: audio_sink points at the always-empty null sink -> silent monitor.
+
+sunshine_name = SecondScreen
+port = 48020
+
+min_log_level = info
+log_path      = @STATEDIR@/sunshine-display.log
+
+file_apps        = @CONFDIR@/apps-display.json
+file_state       = @CONFDIR@/display_state.json
+credentials_file = @CONFDIR@/credentials/creds.json
+pkey             = @CONFDIR@/credentials/pkey.pem
+cert             = @CONFDIR@/credentials/cert.pem
+
+# Fixed capture target: the headless output "GL-SCREEN". When a per-app do-cmd
+# has created GL-SCREEN, Sunshine captures it; when it hasn't (mirror app),
+# output_name doesn't match and Sunshine falls back to monitor 0 = your primary.
+capture     = wlr
+output_name = @OUTPUT_ID@
+
+encoder      = vaapi
+adapter_name = /dev/dri/renderD128
+av1_mode  = 1
+hevc_mode = 1
+
+# Audio for the whole second-screen instance. Default off ([secondscreen] audio):
+#   - no default-sink hijack, no leak of a mic that's monitored to your speakers,
+#     no Sunshine sink-sunshine-stereo/-surround* clutter.
+#   - the incoming client microphone is a Moonlight/Artemis client setting, not a
+#     server one - turn "Microphone" off for this host in the client if you don't
+#     want it.
+# Set [secondscreen] audio = passthrough to get desktop sound in mirror/remote.
+stream_audio = @STREAM_AUDIO@
+audio_sink   = @SINK@
+
+gamepad = auto
+origin_web_ui_allowed = lan
+upnp = disabled
+fec_percentage = 20
+
+# No global_prep_cmd - each Moonlight app (Zweitmonitor / Hauptmonitor spiegeln /
+# Remote Work) carries its own per-app prep-cmd do/undo that toggles GL-SCREEN,
+# the primary monitor and the audio bridge. See apps-display.json.

@@ -1,0 +1,57 @@
+# Sway config for the isolated Sunshine gaming session.
+# Installed to ~/.config/gaming-setup/sway/config by install.sh.
+#
+# Runs on the headless wlroots backend (WLR_BACKENDS=headless) as a private
+# WAYLAND_DISPLAY.  Sunshine is started separately by gaming-launcher with this
+# session's environment and captures HEADLESS-1 via wlr-screencopy.
+
+### Output -------------------------------------------------------------------
+# Mode is overwritten at runtime by `gaming-launcher session-prep` to match the
+# connecting Moonlight/Artemis client (clamped to the active profile ceiling).
+output HEADLESS-1 mode 2560x1440@120Hz
+output HEADLESS-1 pos 0 0
+# solid black so the stream isn't garbage before a game draws (needs swaybg;
+# harmless if absent).
+output HEADLESS-1 background #000000 solid_color
+output HEADLESS-1 adaptive_sync off
+output HEADLESS-1 allow_tearing yes
+output HEADLESS-1 max_render_time off
+
+### Input isolation --------------------------------------------------------
+# The headless backend exposes no libinput devices, but be explicit: this
+# session must never consume a physical keyboard/mouse/touch/controller.
+seat seat0 hide_cursor 1
+input type:keyboard  events disabled
+input type:pointer   events disabled
+input type:touch     events disabled
+input type:tablet_tool events disabled
+# Sunshine's uinput virtual devices are created *after* sway starts and are the
+# only ones the streamed game should see; sway ignores them for its own UI.
+
+### Look ------------------------------------------------------------------
+default_border none
+default_floating_border none
+titlebar_padding 1
+gaps inner 0
+gaps outer 0
+hide_edge_borders --i3 none
+focus_follows_mouse no
+
+# New windows fill the output; games/BigPicture go fullscreen.
+for_window [class=".*"]        fullscreen enable
+for_window [app_id=".*"]       fullscreen enable
+for_window [app_id="steam"]    fullscreen enable
+for_window [class="steam"]     fullscreen enable
+for_window [title="Steam Big Picture Mode"] fullscreen enable
+
+### XWayland (Steam and many games still need it) ------------------------
+xwayland enable
+
+### Housekeeping --------------------------------------------------------
+# No idle management here - the client controls the session lifetime.
+exec swaymsg 'workspace 1'
+
+# Publish the real Wayland socket name (wlroots auto-picks wayland-N and ignores
+# a requested $WAYLAND_DISPLAY). gaming-launcher reads this to point Sunshine at
+# the right display.
+exec sh -c 'printf "%s" "$WAYLAND_DISPLAY" > "$XDG_RUNTIME_DIR/gaming-launcher/wl-display"'

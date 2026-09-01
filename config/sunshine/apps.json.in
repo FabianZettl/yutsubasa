@@ -1,0 +1,15 @@
+{
+  "env": {
+    "PATH": "@PATH@"
+  },
+  "apps": [
+    {
+      "name": "Steam Big Picture",
+      "cmd": "@LAUNCHER@ run steam",
+      "auto-detach": true,
+      "wait-all": true,
+      "exclude-global-prep-cmd": false,
+      "image-path": "@ARTDIR@/steam.png"
+    }
+  ]
+}

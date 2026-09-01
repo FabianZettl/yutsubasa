@@ -1,0 +1,53 @@
+# Sunshine config for the isolated gaming-vDisplay instance.
+# Rendered by install.sh to @CONFDIR@/sunshine.conf  (@ tokens substituted).
+# This instance is fully separate from any Polaris/other Sunshine install:
+# its own state, credentials, certs, apps and log all live under @CONFDIR@.
+
+sunshine_name = GamingVDisplay
+
+# Base port. Moonlight uses this (+ web UI on base+1). Do not run this at the
+# same time as another Sunshine/Polaris on the default ports.
+port = 47989
+
+min_log_level = info
+log_path      = @STATEDIR@/sunshine.log
+
+# ---- isolated data -------------------------------------------------------
+file_apps        = @CONFDIR@/apps.json
+file_state       = @CONFDIR@/sunshine_state.json
+credentials_file = @CONFDIR@/credentials/creds.json
+pkey             = @CONFDIR@/credentials/pkey.pem
+cert             = @CONFDIR@/credentials/cert.pem
+
+# ---- capture (headless Sway output via wlr-screencopy) -----------------
+capture = wlr
+# Single output in the session -> leave output_name empty to grab it.
+# output_name =
+
+# ---- AMD VCN 4.0 encode (RX 7800 XT, single VCN unit) -----------------
+encoder      = vaapi
+adapter_name = /dev/dri/renderD128
+# Advertise AV1 + HEVC; Moonlight/Artemis pick within client capability,
+# H.264 is the automatic fallback. gaming-launcher rewrites av1_mode/hevc_mode
+# per quality profile.
+av1_mode  = 1
+hevc_mode = 1
+# Latency-leaning VAAPI rate control.
+vaapi_strict_rc_buffer = disabled
+
+# ---- audio isolation --------------------------------------------------
+# Record the dedicated null sink's monitor; the desktop keeps its own default.
+audio_sink = @SINK@
+
+# ---- input ----------------------------------------------------------
+gamepad = auto
+# Physical pad on the host is grabbed by Steam Input in-session; this is the
+# virtual pad presented to games over the stream.
+
+# ---- network ------------------------------------------------------
+origin_web_ui_allowed = lan
+upnp = disabled
+fec_percentage = 20
+
+# ---- session hooks (adaptive resolution / audio / input isolation) ----
+global_prep_cmd = [{"do":"@LAUNCHER@ session-prep","undo":"@LAUNCHER@ session-postp"}]

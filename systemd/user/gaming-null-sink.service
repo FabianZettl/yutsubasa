@@ -1,0 +1,18 @@
+[Unit]
+Description=Persistent PipeWire null sink for the Sunshine gaming session
+# Follows pipewire's lifecycle so the sink is recreated after a pipewire restart.
+After=pipewire.service wireplumber.service pipewire-pulse.service
+Wants=pipewire.service
+PartOf=pipewire.service
+BindsTo=pipewire.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Created via pactl (pipewire-pulse) so it never edits pipewire's own config -
+# a bad drop-in there can stop the whole audio stack from starting.
+ExecStart=/usr/bin/pactl load-module module-null-sink sink_name=sink-sunshine sink_properties=device.description=Sunshine-Stream
+ExecStop=/bin/sh -c '/usr/bin/pactl unload-module $(/usr/bin/pactl list short modules | awk "/sink_name=sink-sunshine/ {print \\$1; exit}")'
+
+[Install]
+WantedBy=default.target

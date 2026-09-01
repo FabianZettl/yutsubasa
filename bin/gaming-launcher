@@ -1,0 +1,827 @@
+#!/usr/bin/env bash
+# gaming-launcher - manage an isolated headless Sway session that Sunshine
+# streams to Moonlight/Artemis, keeping the physical Hyprland desktop untouched.
+#
+#   gaming-launcher <command> [options]
+#
+# See `gaming-launcher help` or docs/README.md.
+
+# No `pipefail`: many checks pipe a slow producer (lspci, vainfo) into `grep -q`,
+# which exits early and SIGPIPEs the producer - with pipefail that reads as a
+# spurious failure. Errors are handled explicitly instead.
+set -u
+
+# --- locate the install --------------------------------------------------
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+GL_ROOT="$(cd "$(dirname "$_self")/.." && pwd)"
+export GL_ROOT
+LIB="$GL_ROOT/lib"
+
+# shellcheck source=/dev/null
+source "$LIB/common.sh"
+source "$LIB/session.sh"
+source "$LIB/audio.sh"
+source "$LIB/quality.sh"
+source "$LIB/input.sh"
+source "$LIB/steam.sh"
+
+VERSION="1.0.0"
+LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
+
+# =======================================================================
+# option parsing helper: pulls --profile/--res/--fps/--auto out of "$@",
+# leaves positionals in GL_POS[]
+# =======================================================================
+OPT_PROFILE=""; OPT_RES=""; OPT_FPS=""; OPT_AUTO=""; OPT_DEBUG=0; OPT_DIRECT=0
+declare -a GL_POS=()
+parse_opts() {
+    GL_POS=()
+    while (($#)); do
+        case "$1" in
+            --profile|-p) OPT_PROFILE="${2:?--profile needs a value}"; shift 2;;
+            --profile=*)  OPT_PROFILE="${1#*=}"; shift;;
+            --res|-r)     OPT_RES="${2:?--res needs WxH}"; shift 2;;
+            --res=*)      OPT_RES="${1#*=}"; shift;;
+            --fps|-f)     OPT_FPS="${2:?--fps needs a number}"; shift 2;;
+            --fps=*)      OPT_FPS="${1#*=}"; shift;;
+            --auto)       OPT_AUTO="${2:?--auto on|off}"; shift 2;;
+            --auto=*)     OPT_AUTO="${1#*=}"; shift;;
+            --debug)      OPT_DEBUG=1; shift;;
+            --direct)     OPT_DIRECT=1; shift;;
+            --big-picture) OPT_DIRECT=0; shift;;
+            --)           shift; while (($#)); do GL_POS+=("$1"); shift; done;;
+            -*)           die "unknown option: $1";;
+            *)            GL_POS+=("$1"); shift;;
+        esac
+    done
+    (( OPT_DEBUG )) && { export GL_DEBUG=1; set -x; }
+}
+
+_apply_res_fps_opts() {
+    if [[ -n "$OPT_RES" ]]; then
+        [[ "$OPT_RES" =~ ^([0-9]+)x([0-9]+)$ ]] || die "--res must be WxH e.g. 1920x1080"
+        state_set width "${BASH_REMATCH[1]}"; state_set height "${BASH_REMATCH[2]}"
+    fi
+    [[ -n "$OPT_FPS" ]] && { is_int "$OPT_FPS" || die "--fps must be a number"; state_set fps "$OPT_FPS"; }
+}
+
+# =======================================================================
+# commands
+# =======================================================================
+
+cmd_gaming() {
+    parse_opts "$@"
+    local game="${GL_POS[0]:-}"
+    local profile="${OPT_PROFILE:-$(DEFAULT_PROFILE)}"
+
+    local miss=()
+    have sway || miss+=(sway); have swaymsg || miss+=(sway); have jq || miss+=(jq)
+    have "$(SUNSHINE_BIN)" || miss+=(sunshine)
+    have dbus-run-session || miss+=(dbus)
+    if ((${#miss[@]})); then
+        err "missing: $(printf '%s\n' "${miss[@]}" | sort -u | csv)"
+        die "run:  sudo pacman -S --needed $(printf '%s\n' "${miss[@]}" | sort -u | tr '\n' ' ') ; then ./install.sh"
+    fi
+
+    state_init
+    state_set profile "$profile"
+    state_set mode "gaming"
+    _apply_res_fps_opts
+
+    if session_active; then
+        info "session already up; re-applying profile"
+        quality_apply "$profile"
+    else
+        if systemctl --user list-unit-files sunshine-gaming.service >/dev/null 2>&1; then
+            info "starting via systemd user unit"
+            systemctl --user start sunshine-gaming.service
+            wait_for 200 session_active || die "session did not start; journalctl --user -u sunshine-gaming"
+        else
+            warn "systemd unit not installed; running detached from this shell"
+            setsid --fork "$LAUNCHER_PATH" session-run </dev/null >>"$GL_SESSION_LOG" 2>&1 &
+            disown || true
+            wait_for 250 session_active || die "session did not start; see $GL_SESSION_LOG"
+        fi
+        quality_apply "$profile"
+    fi
+
+    # Controller / audio isolation is applied on client connect (session-prep),
+    # so it is not left dangling when nobody is streaming.
+    ok "gaming session ready. Connect Moonlight/Artemis to this host and pick an app."
+    if [[ -n "$game" ]]; then
+        info "launching '$game' directly in the session"
+        _run_in_session "$(_resolve_game_cmd "$game")"
+    fi
+    cmd_status
+}
+
+cmd_steam() { cmd_gaming --profile "${2:-$(DEFAULT_PROFILE)}" ; }
+
+# invoked BY Sunshine (already inside the session env) as the app command.
+cmd_run() {
+    parse_opts "$@"
+    local what="${GL_POS[0]:-steam}"
+    local profile="${OPT_PROFILE:-$(state_get .profile)}"; [[ -z "$profile" || "$profile" == null ]] && profile="$(DEFAULT_PROFILE)"
+    state_set active_app "$what"
+
+    # Steam is single-instance: a desktop Steam will just eat this launch and the
+    # stream stays black. Refuse early with a clear message.
+    if [[ "$what" == steam* || "$what" == bigpicture ]]; then
+        local other
+        other=$(pgrep -x steam 2>/dev/null | grep -v "$$" || true)
+        if [[ -n "$other" ]] && ! pstree -ps "$other" 2>/dev/null | grep -q "sway"; then
+            err "Steam is already running on the desktop (pid ${other%%$'\n'*})."
+            err "Quit it fully (Steam ▸ Exit) - a 2nd instance can't start; the stream would stay black."
+            exit 1
+        fi
+    fi
+    quality_apply "$profile" 1 >/dev/null 2>&1 || true   # codec only; keep client resolution
+
+    local target; target="$(_resolve_game_cmd "$what")"
+    local gsargs; gsargs="$(quality_gamescope_args)"
+    info "run: $what -> ${gsargs:+gamescope … -- }$target"
+    # shellcheck disable=SC2086
+    exec $gsargs $target
+}
+
+_resolve_game_cmd() {
+    local what="$1"
+    case "$what" in
+        steam|bigpicture)  steam_bigpicture_cmd ;;
+        desktop)           echo "${TERMINAL:-foot}" ;;
+        steam:*|[0-9]*)    steam_app_cmd "$(steam_resolve_appid "$what" || die "no Steam app matches '$what'")" "$([[ ${OPT_DIRECT:-0} == 1 ]] && echo direct || echo bigpicture)" ;;
+        *)
+            # a named entry in apps.json? else treat as a raw command
+            local c
+            c=$(jq -r --arg n "$what" '.apps[]? | select(.name==$n) | .cmd' "$GL_SUNSHINE_APPS" 2>/dev/null)
+            if [[ -n "$c" && "$c" != null ]]; then echo "$c"
+            elif command -v "${what%% *}" >/dev/null 2>&1; then echo "$what"
+            else
+                local id; id=$(steam_resolve_appid "$what" 2>/dev/null) && steam_app_cmd "$id" || die "cannot resolve '$what'"
+            fi
+            ;;
+    esac
+}
+
+_run_in_session() {
+    local cmd="$1"
+    gsway exec -- "env _GL_SESSION=1 $(quality_gamescope_args) $cmd" >/dev/null 2>&1 \
+        && ok "started in session: $cmd" \
+        || warn "could not start '$cmd' in session"
+}
+
+cmd_quality() {
+    parse_opts "$@"
+    if [[ -n "$OPT_AUTO" ]]; then
+        case "$OPT_AUTO" in
+            on)  _adapter enable ;;
+            off) _adapter disable ;;
+            *)   die "--auto on|off" ;;
+        esac
+        return
+    fi
+    local p="${GL_POS[0]:-}"
+    [[ -z "$p" ]] && { printf 'profiles:\n'; quality_list | sed 's/^/  /'; echo; echo "active: $(state_get .profile)"; return; }
+    _apply_res_fps_opts
+    quality_apply "$p"
+}
+
+_adapter() {
+    local unit=gaming-quality-adapter.service
+    case "$1" in
+        enable)  systemctl --user start "$unit" 2>/dev/null && ok "auto quality adapter on" \
+                    || { setsid --fork "$LAUNCHER_PATH" _adapter-loop </dev/null >>"$GL_STATE_DIR/quality-adapter.log" 2>&1 & disown; ok "auto quality adapter on (detached)"; } ;;
+        disable) systemctl --user stop "$unit" 2>/dev/null; pkill -f "gaming-launcher _adapter-loop" 2>/dev/null; ok "auto quality adapter off" ;;
+    esac
+}
+
+# background loop: watch sunshine.log for sustained frame loss, step profile
+cmd__adapter_loop() {
+    local poll down up
+    poll=$(gl_cfg adapter poll_seconds 5)
+    down=$(gl_cfg adapter downgrade_after 45)
+    up=$(gl_cfg adapter upgrade_after 15)
+    local bad=0 good=0 logf="$GL_STATE_DIR/sunshine.log"
+    info "quality adapter loop started (poll ${poll}s)"
+    while session_active; do
+        sleep "$poll"
+        [[ -r "$logf" ]] || continue
+        local recent; recent=$(tail -n 200 "$logf" 2>/dev/null)
+        local drops
+        drops=$(printf '%s\n' "$recent" | grep -ciE 'dropped|packet loss|fec.*repair|network.*congest' || true)
+        local cur; cur=$(state_get .profile)
+        if (( drops >= 3 )); then
+            bad=$((bad+poll)); good=0
+            if (( bad >= down )); then
+                local nxt; nxt=$(quality_step_down "$cur")
+                [[ "$nxt" != "$cur" ]] && { warn "sustained loss -> stepping down: $cur -> $nxt"; quality_apply "$nxt" >/dev/null; }
+                bad=0
+            fi
+        else
+            good=$((good+poll)); bad=0
+            if (( good >= up*4 )); then
+                local nxt; nxt=$(quality_step_up "$cur")
+                [[ "$nxt" != "$cur" ]] && { info "network healthy -> stepping up: $cur -> $nxt"; quality_apply "$nxt" >/dev/null; }
+                good=0
+            fi
+        fi
+    done
+    info "quality adapter loop stopped (session gone)"
+}
+
+# ---- second screen ----------------------------------------------------
+# A slim second Sunshine (port 48020) in the DESKTOP Hyprland that streams a
+# headless output as an extra monitor. Structure set up here; the per-client
+# resolution match + teardown-on-disconnect run as the instance's do/undo
+# prep-cmds (secondscreen-up / secondscreen-down).
+SCR_LUA="$HOME/.config/hypr/gaming-setup-display.lua"
+SCR_CONF="$GL_SUNSHINE_DIR/sunshine-display.conf"
+SCR_APPS="$GL_SUNSHINE_DIR/apps-display.json"
+SCR_PAT='sunshine .*/sunshine-display\.conf$'
+SCR_HEADLESS="GL-SCREEN"          # fixed name for the headless output we create
+# sunshine-display.conf has output_name = GL-SCREEN. When GL-SCREEN exists,
+# Sunshine captures it; when it doesn't, output_name doesn't match and Sunshine
+# falls back to monitor 0 (your primary). Each Moonlight app's do/undo just
+# toggles GL-SCREEN + the primary + the audio bridge.
+
+_hc() {  # hyprctl for the desktop session
+    if [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then hyprctl "$@"; else _dsk_hyprctl "$@"; fi
+}
+
+# _scr_write_rule <headless|""> <WxH@Hz> <position> <scale> [disable_output|""]
+_scr_write_rule() {
+    local o=$1 m=$2 p=$3 s=$4 dis=${5:-} body
+    [[ -f "$SCR_LUA" ]] || printf -- '-- BEGIN gaming-launcher\n-- END gaming-launcher\n' >"$SCR_LUA"
+    body="-- BEGIN gaming-launcher"
+    [[ -n "$o" ]]  && body+=$'\n'"hl.monitor({ output = \"$o\", mode = \"$m\", position = \"$p\", scale = $s })"
+    [[ -n "$dis" ]] && body+=$'\n'"hl.monitor({ output = \"$dis\", disabled = true })"
+    [[ -z "$o$dis" ]] && body+=$'\n'"-- (inactive)"
+    body+=$'\n'"-- END gaming-launcher"
+    awk -v repl="$body" '
+        /-- BEGIN gaming-launcher/ {print repl; skip=1; next}
+        /-- END gaming-launcher/   {skip=0; next}
+        !skip
+    ' "$SCR_LUA" >"$SCR_LUA.tmp" && mv "$SCR_LUA.tmp" "$SCR_LUA"
+    _hc reload >/dev/null 2>&1 || true
+}
+
+# name of the real (non-headless) primary monitor
+_scr_primary() {
+    local m; m=$(gl_cfg secondscreen mirror_output "")
+    [[ -n "$m" ]] && { echo "$m"; return; }
+    _hc monitors -j 2>/dev/null | jq -r 'map(select(.name|test("^(HEADLESS-|GL-SCREEN)")|not)) | (.[] | select(.focused)) // .[0] | .name' 2>/dev/null
+}
+
+# hyprctl dispatch is routed through the Lua VM on this config: only the
+# hl.dsp.* form works ( "moveworkspacetomonitor 1 DP-2" does not parse ).
+_scr_dispatch() { _hc dispatch "$1" >/dev/null 2>&1 || true; }
+
+# explicit position "<X>x<Y>" so GL-SCREEN sits flush against the primary
+# (auto-left aligns to x=0, leaving a gap).
+_scr_position() {  # _scr_position <primary> <side> <scr_w> <scr_h>
+    local p=$1 side=$2 w=$3 h=$4 g
+    g=$(_hc monitors -j 2>/dev/null | jq -r --arg n "$p" '.[]|select(.name==$n)|"\(.x) \(.y) \(.width) \(.height)"')
+    [[ -n "$g" ]] || { echo "$side"; return; }
+    local px py pw ph; read -r px py pw ph <<<"$g"
+    case "$side" in
+        right)  echo "$((px + pw))x${py}" ;;
+        up)     echo "${px}x$((py - h))" ;;
+        down)   echo "${px}x$((py + ph))" ;;
+        *x*)    echo "$side" ;;                # already explicit
+        *)      echo "$((px - w))x${py}" ;;    # left (default)
+    esac
+}
+
+# keep DP-2 as the primary: move GL-SCREEN's workspace to a dedicated high one
+# and hand focus back. (Hyprland gives a new monitor the lowest free workspace,
+# which is often 1.)
+_scr_fixup_workspace() {
+    local primary=$1 ws; ws=$(gl_cfg secondscreen workspace 99)
+    sleep 0.3
+    _scr_dispatch "hl.dsp.focus({ monitor = \"$SCR_HEADLESS\" })"
+    _scr_dispatch "hl.dsp.focus({ workspace = $ws })"
+    _scr_dispatch "hl.dsp.focus({ monitor = \"$primary\" })"
+}
+
+cmd_secondscreen() {
+    parse_opts "$@"
+    local sub="${GL_POS[0]:-status}" foreground=0
+    case "$sub" in
+        on|start)  : ;;
+        run)       foreground=1 ;;
+        off|stop)  _scr_teardown; return ;;
+        status)    cmd_status; return ;;
+        *) die "secondscreen on|off|status|run   (pick extra/mirror/remote-work as the Moonlight app)" ;;
+    esac
+
+    need "$(SUNSHINE_BIN)"; need jq
+    have hyprctl || die "this needs the running Hyprland desktop (hyprctl)"
+    if (( foreground )); then
+        wait_for 1800 bash -c '_s=$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | head -1); [ -n "$_s" ] && HYPRLAND_INSTANCE_SIGNATURE="$_s" hyprctl version >/dev/null 2>&1' \
+            || die "desktop Hyprland IPC never appeared - not starting second screen"
+    fi
+    _hc version >/dev/null 2>&1 || die "cannot reach the desktop Hyprland IPC"
+    grep -q 'gaming-setup-display' "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
+        || warn "hyprland.lua doesn't load gaming-setup-display.lua - resize/disable rules won't apply (run ./install.sh)"
+
+    pgrep -f "$SCR_PAT" >/dev/null && { info "second-screen Sunshine already running"; (( foreground )) || return 0; }
+
+    # idle cleanup: no client -> no GL-SCREEN, primary enabled
+    _hc output remove "$SCR_HEADLESS" >/dev/null 2>&1 || true
+    _scr_write_rule "" "" "" ""
+
+    render_scr_conf
+    render_scr_apps
+
+    : >"$GL_STATE_DIR/sunshine-display.out"
+    setsid "$(SUNSHINE_BIN)" "$SCR_CONF" </dev/null >>"$GL_STATE_DIR/sunshine-display.out" 2>&1 &
+    state_set_raw scr_pid "$!"
+    state_set scr_kind idle
+    disown
+    ok "second-screen Sunshine on :48020. In Moonlight/Artemis pick an app:"
+    ok "  \"Zweitmonitor\"  extra headless monitor ($(gl_cfg secondscreen position left) of your desktop, muted)"
+    ok "  \"Hauptmonitor spiegeln\"  your primary as-is, audio passthrough"
+    ok "  \"Remote Work\"  headless + primary monitor OFF"
+
+    if (( foreground )); then
+        local sp; sp=$(state_get .scr_pid)
+        info "supervising second-screen Sunshine (pid $sp)"
+        while [[ "$sp" =~ ^[0-9]+$ ]] && kill -0 "$sp" 2>/dev/null; do sleep 3; done
+        info "second-screen Sunshine exited; cleaning up"
+        _scr_teardown quiet
+    fi
+}
+
+render_scr_conf() {
+    local sa; [[ "$(gl_cfg secondscreen audio off)" == passthrough ]] && sa=enabled || sa=disabled
+    sed -e "s|@STATEDIR@|$GL_STATE_DIR|g" -e "s|@CONFDIR@|$GL_SUNSHINE_DIR|g" \
+        -e "s|@SINK@|$(AUDIO_SINK)|g" -e "s|@OUTPUT_ID@|$SCR_HEADLESS|g" -e "s|@LAUNCHER@|$LAUNCHER_PATH|g" \
+        -e "s|@STREAM_AUDIO@|$sa|g" \
+        "$GL_ROOT/config/sunshine/sunshine-display.conf.in" >"$SCR_CONF"
+    sed -i "s|^global_prep_cmd = .*|# per-app prep-cmds instead|" "$SCR_CONF"
+    SCR_AUDIO="$sa"
+}
+
+render_scr_apps() {
+    [[ -f "$SCR_APPS" ]] && grep -q 'secondscreen-app' "$SCR_APPS" && return 0
+    local L="$LAUNCHER_PATH"
+    local i1 i2 i3
+    i1=$(art_png /usr/share/sunshine/desktop.png     scr-extra  2>/dev/null || echo "")
+    i2=$(art_png /usr/share/sunshine/desktop-alt.png scr-mirror 2>/dev/null || echo "")
+    i3=$(art_png /usr/share/sunshine/box.png         scr-remote 2>/dev/null || echo "")
+    jq -n --arg L "$L" --arg i1 "$i1" --arg i2 "$i2" --arg i3 "$i3" '{
+      env: {},
+      apps: [
+        { name:"Zweitmonitor",           "auto-detach":true, "wait-all":true, "image-path":$i1,
+          "prep-cmd":[{ do:($L+" secondscreen-app extra"),  undo:($L+" secondscreen-app-undo") }] },
+        { name:"Hauptmonitor spiegeln",   "auto-detach":true, "wait-all":true, "image-path":$i2,
+          "prep-cmd":[{ do:($L+" secondscreen-app mirror"), undo:($L+" secondscreen-app-undo") }] },
+        { name:"Remote Work",             "auto-detach":true, "wait-all":true, "image-path":$i3,
+          "prep-cmd":[{ do:($L+" secondscreen-app remote"), undo:($L+" secondscreen-app-undo") }] }
+      ]
+    }' >"$SCR_APPS"
+}
+
+_scr_teardown() {
+    local quiet=${1:-} p; p=$(state_get .scr_pid)
+    [[ "$p" =~ ^[0-9]+$ ]] && kill "$p" 2>/dev/null
+    pkill -TERM -f "$SCR_PAT" 2>/dev/null || true
+    wait_for 30 bash -c "! pgrep -f '$SCR_PAT' >/dev/null" || pkill -KILL -f "$SCR_PAT" 2>/dev/null || true
+    _scr_app_cleanup
+    state_unset scr_pid scr_kind scr_res scr_disabled_output
+    [[ "$quiet" == quiet ]] || ok "second screen removed"
+}
+
+# ---- per-Moonlight-app do/undo --------------------------------------------
+# One instance (output_name = GL-SCREEN). GL-SCREEN present -> Sunshine captures
+# it; absent -> Sunshine falls back to the primary monitor.
+_scr_app_cleanup() {
+    audio_bridge_stop || true
+    audio_pin_stop || true
+    audio_restore_default || true
+    _hc output remove "$SCR_HEADLESS" >/dev/null 2>&1 || true
+    _scr_write_rule "" "" "" ""      # also re-enables a disabled primary
+    _scr_dispatch "hl.dsp.focus({ monitor = \"$(_scr_primary)\" })"
+}
+
+cmd_secondscreen_app() {
+    local kind="${1:-extra}"
+    local w h f pos scale primary rd audio_on=0
+    [[ "$(gl_cfg secondscreen audio off)" == passthrough ]] && audio_on=1
+    w="${SUNSHINE_CLIENT_WIDTH:-}";  h="${SUNSHINE_CLIENT_HEIGHT:-}";  f="${SUNSHINE_CLIENT_FPS:-}"
+    is_int "${w:-x}" && is_int "${h:-x}" && is_int "${f:-x}" || { w=$(gl_cfg secondscreen width 1920); h=$(gl_cfg secondscreen height 1080); f=$(gl_cfg secondscreen fps 60); }
+    scale=$(gl_cfg secondscreen scale 1)
+    primary=$(_scr_primary)
+    pos=$(_scr_position "$primary" "$(gl_cfg secondscreen position left)" "$w" "$h")
+    rd=$(audio_default_sink); [[ -n "$rd" && "$rd" != sink-sunshine* ]] && state_set real_default_sink "$rd"
+
+    # start from a clean slate every connect
+    _hc output remove "$SCR_HEADLESS" >/dev/null 2>&1 || true
+
+    case "$kind" in
+        mirror)
+            info "app: mirror -> capturing primary '$primary' (${w}x${h}), audio=$([[ $audio_on == 1 ]] && echo passthrough || echo off)"
+            _scr_write_rule "" "" "" ""                       # no GL-SCREEN -> Sunshine grabs primary
+            state_set scr_disabled_output ""
+            (( audio_on )) && { audio_pin_start || true; audio_bridge_start || true; }
+            ;;
+        remote)
+            info "app: remote-work -> GL-SCREEN ${w}x${h}@${f} @$pos, primary '$primary' OFF, audio=$([[ $audio_on == 1 ]] && echo passthrough || echo off)"
+            _hc output create headless "$SCR_HEADLESS" >/dev/null 2>&1 || die "hyprctl output create headless $SCR_HEADLESS failed"
+            sleep 0.4
+            _scr_write_rule "$SCR_HEADLESS" "${w}x${h}@${f}" "$pos" "$scale" "$primary"
+            _scr_fixup_workspace "$primary"
+            state_set scr_disabled_output "$primary"
+            (( audio_on )) && { audio_pin_start || true; audio_bridge_start || true; }
+            ;;
+        *)  # extra
+            info "app: extra monitor -> GL-SCREEN ${w}x${h}@${f} @$pos, audio muted"
+            _hc output create headless "$SCR_HEADLESS" >/dev/null 2>&1 || die "hyprctl output create headless $SCR_HEADLESS failed"
+            sleep 0.4
+            _scr_write_rule "$SCR_HEADLESS" "${w}x${h}@${f}" "$pos" "$scale" ""
+            _scr_fixup_workspace "$primary"
+            state_set scr_disabled_output ""
+            (( audio_on )) && { audio_pin_start || true; }     # only matters if the instance streams audio at all
+            ;;
+    esac
+    state_set scr_kind "$kind"
+    state_set scr_res "${w}x${h}@${f}"
+    # settle so the output/rule are live before Sunshine acquires the display
+    sleep 0.6
+    true
+}
+
+cmd_secondscreen_app_undo() {
+    info "second-screen app disconnected ($(state_get .scr_kind))"
+    _scr_app_cleanup
+    state_unset scr_res scr_disabled_output
+    state_set scr_kind idle
+    true
+}
+
+cmd_stop() {
+    parse_opts "$@"
+    if [[ -n "$(state_get .scr_kind)" ]] || pgrep -f "$SCR_PAT" >/dev/null; then
+        _scr_teardown
+    fi
+    _adapter disable >/dev/null 2>&1 || true
+    if session_active || [[ -S "$GL_SWAY_SOCK" ]]; then
+        if systemctl --user is-active --quiet sunshine-gaming.service 2>/dev/null; then
+            systemctl --user stop sunshine-gaming.service
+        else
+            session_down
+        fi
+    else
+        info "no gaming session running"
+        audio_restore_default || true
+        input_release || true
+    fi
+    ok "done"
+}
+
+cmd_status() {
+    parse_opts "$@"
+    local line='────────────────────────────────────────────'
+    echo "$line"
+    if session_active; then
+        local sp wl; sp=$(state_get .sway_pid); wl=$(state_get .wl_display)
+        [[ -z "$wl" || "$wl" == null ]] && wl="$GL_WAYLAND_DISPLAY"
+        printf '  Session     : \e[32mup\e[0m  (sway pid %s, WAYLAND_DISPLAY=%s)\n' "$sp" "$wl"
+        printf '  Profile     : %s\n' "$(state_get .profile)"
+        printf '  Output      : HEADLESS-1 @ %sx%s@%s\n' "$(state_get .width)" "$(state_get .height)" "$(state_get .fps)"
+        local om; om=$(gsway -t get_outputs 2>/dev/null | jq -r '.[]|select(.name=="HEADLESS-1")|"\(.current_mode.width)x\(.current_mode.height)@\(.current_mode.refresh/1000|floor)"' 2>/dev/null)
+        [[ -n "$om" ]] && printf '  Sway reports : %s\n' "$om"
+    else
+        printf '  Session     : \e[2mdown\e[0m\n'
+    fi
+
+    if [[ -n "$(state_get .scr_kind)" ]] || pgrep -f "$SCR_PAT" >/dev/null; then
+        local sk; sk=$(state_get .scr_kind)
+        if [[ -z "$sk" || "$sk" == idle || "$sk" == null ]]; then
+            printf '  Second screen: \e[36mready\e[0m on :48020 (pick a Moonlight app)\n'
+        else
+            printf '  Second screen: \e[36m%s\e[0m @ %s, port 48020\n' "$sk" "$(state_get .scr_res)"
+            local dis; dis=$(state_get .scr_disabled_output)
+            [[ -n "$dis" && "$dis" != null ]] && printf '  \e[33m%s is OFF\e[0m (disconnect the app / "secondscreen off" to restore)\n' "$dis"
+        fi
+    fi
+
+    local spid; spid=$(pgrep -af "sunshine .*/(sunshine|sunshine-display)\.conf" | head -1)
+    [[ -n "$spid" ]] && printf '  Sunshine    : running (%s)\n' "${spid%% *}" || printf '  Sunshine    : not running\n'
+
+    # connected clients (Sunshine logs "CLIENT CONNECTED")
+    local clients
+    clients=$(grep -c "CLIENT CONNECTED" "$GL_STATE_DIR/sunshine.log" 2>/dev/null || echo 0)
+    printf '  Encoder     : vaapi / %s\n' "$(_encoder_codec)"
+    _vcn_load | sed 's/^/  /'
+    echo "$line"
+    have swaymsg && session_active && input_status | sed 's/^/  /'
+    echo "$line"
+    if pgrep -x polaris >/dev/null; then
+        printf '  \e[33mnote\e[0m: polaris is running - it will clash on the default ports\n'
+    fi
+}
+
+_encoder_codec() {
+    local av1 hevc
+    av1=$(conf_get "$GL_SUNSHINE_CONF" '' av1_mode 0)
+    hevc=$(conf_get "$GL_SUNSHINE_CONF" '' hevc_mode 0)
+    [[ "$av1" == 1* ]] && { echo "AV1 (HEVC/H264 fallback)"; return; }
+    [[ "$hevc" == 1* ]] && { echo "HEVC (H264 fallback)"; return; }
+    echo "H264"
+}
+
+_vcn_load() {
+    if have amdgpu_top; then
+        amdgpu_top -J -n 1 2>/dev/null | jq -r '
+            "VCN/encode  : " + ((.devices[0].gpu_activity.MediaEngine.value|tostring) // "n/a") + " %"' 2>/dev/null && return
+    fi
+    local busy=/sys/class/drm/card1/device/gpu_busy_percent
+    [[ -r "$busy" ]] && printf 'GPU busy    : %s %%  (install amdgpu_top for per-VCN)\n' "$(cat "$busy")" \
+        || echo "VCN load    : install 'amdgpu_top' to show"
+}
+
+cmd_audio() {
+    parse_opts "$@"
+    case "${GL_POS[0]:-status}" in
+        headset) audio_headset "${GL_POS[1]:-status}" ;;
+        status)  audio_headset status; echo "null sink: $(pactl list short sinks 2>/dev/null | grep -q "$(AUDIO_SINK)" && echo present || echo MISSING)" ;;
+        restore) audio_restore_default ;;
+        *)       die "audio headset on|off | audio status | audio restore" ;;
+    esac
+}
+
+cmd_list_games() {
+    steam_list_games | awk -F'\t' '{printf "  %-8s %s\n",$1,$2}'
+}
+
+# resolve a box-art PNG for an app; echoes a path or ""
+_app_art() {  # _app_art <target>   target = steam:APPID | APPID | <binary/cmd>
+    local t=$1 appid img
+    if [[ "$t" == steam:* || "$t" =~ ^[0-9]+$ ]]; then
+        appid=${t#steam:}
+        for f in library_600x900.jpg library_600x900_2x.jpg logo.png header.jpg; do
+            img="$HOME/.local/share/Steam/appcache/librarycache/$appid/$f"
+            [[ -f "$img" ]] && { art_png "$img" "steam-$appid" && return 0; }
+        done
+        art_png /usr/share/sunshine/steam.png "steam" && return 0
+        return 1
+    fi
+    # a binary: try its .desktop Icon=, then a hicolor png/svg, else the generic box
+    local bin=${t%% *} ic
+    ic=$(grep -h '^Icon=' "$HOME/.local/share/applications/$bin.desktop" \
+            /usr/share/applications/"$bin".desktop /usr/share/applications/*"$bin"*.desktop 2>/dev/null | head -1 | cut -d= -f2)
+    [[ -z "$ic" ]] && ic="$bin"
+    if [[ "$ic" == /* && -f "$ic" ]]; then art_png "$ic" "$bin" && return 0; fi
+    for d in 512x512 256x256 scalable 384x384 128x128; do
+        for e in png svg svgz; do
+            img="/usr/share/icons/hicolor/$d/apps/$ic.$e"
+            [[ -f "$img" ]] && { art_png "$img" "$bin" && return 0; }
+        done
+    done
+    [[ -f /usr/share/pixmaps/"$ic".png ]] && { art_png /usr/share/pixmaps/"$ic".png "$bin" && return 0; }
+    art_png /usr/share/sunshine/box.png "box" && return 0
+    return 1
+}
+
+cmd_add_game() {
+    parse_opts "$@"
+    local name="${GL_POS[0]:?usage: add-game <name> <cmd|steam:APPID>}"
+    local target="${GL_POS[1]:?usage: add-game <name> <cmd|steam:APPID>}"
+    local profile="${OPT_PROFILE:-$(DEFAULT_PROFILE)}"
+    need jq
+    local cmd d=""
+    (( OPT_DIRECT )) && d=" --direct"
+    if [[ "$target" == steam:* || "$target" =~ ^[0-9]+$ ]]; then
+        cmd="$LAUNCHER_PATH run $(steam_resolve_appid "$target" || die "no such Steam app") --profile $profile$d"
+    else
+        cmd="$LAUNCHER_PATH run $target --profile $profile"
+    fi
+    local img; img=$(_app_art "$target" 2>/dev/null || true)
+    local tmp; tmp=$(mktemp)
+    jq --arg n "$name" --arg c "$cmd" --arg i "$img" \
+       '(.apps |= map(select(.name != $n)))
+        | .apps += [{"name":$n,"cmd":$c,"auto-detach":true,"wait-all":true} + (if $i != "" then {"image-path":$i} else {} end)]' \
+       "$GL_SUNSHINE_APPS" >"$tmp" && mv "$tmp" "$GL_SUNSHINE_APPS"
+    ok "added app '$name' -> $cmd${img:+  (cover: $(basename "$img"))}"
+    pgrep -f "sunshine .*$GL_SUNSHINE_CONF" >/dev/null && info "restart the session for Sunshine to reload apps"
+}
+
+cmd_logs() {
+    parse_opts "$@"
+    case "${GL_POS[0]:-tail}" in
+        analyze)
+            echo "== recent errors / warnings =="
+            grep -hiE 'error|warn|fail|drop' "$GL_STATE_DIR"/*.log 2>/dev/null | tail -n 40
+            echo; echo "== encoder init =="
+            grep -hiE 'encoder|vaapi|va-api|capture' "$GL_STATE_DIR/sunshine.log" 2>/dev/null | tail -n 20
+            ;;
+        *) tail -n 60 -F "$GL_STATE_DIR/launcher.log" "$GL_STATE_DIR/sunshine.log" 2>/dev/null ;;
+    esac
+}
+
+cmd_benchmark() {
+    parse_opts "$@"
+    echo "── gaming-setup quick benchmark ──────────────"
+    echo "[VA-API encoders]"
+    vainfo 2>/dev/null | grep -E 'VAProfile(H264|HEVC|AV1).*Enc' | sed 's/^/  /' || echo "  vainfo failed"
+    echo
+    echo "[gamescope headless 240-frame encode probe]"
+    if session_active && have gamescope; then
+        timeout 20 env WAYLAND_DISPLAY="$GL_WAYLAND_DISPLAY" SWAYSOCK="$GL_SWAY_SOCK" \
+            gamescope -W "$(state_get .width)" -H "$(state_get .height)" -r "$(state_get .fps)" \
+            --headless -- vkcube --c 240 2>&1 | grep -iE 'fps|frames' | tail -n 5 | sed 's/^/  /' \
+            || echo "  (needs vkcube; informational only)"
+    else
+        echo "  start a session first: gaming-launcher gaming"
+    fi
+    echo
+    echo "[capture path]"
+    grep -iE 'wlr|screencopy|dmabuf|shm' "$GL_STATE_DIR/sunshine.log" 2>/dev/null | tail -n 5 | sed 's/^/  /' || echo "  no capture logs yet"
+    echo "─────────────────────────────────────────────"
+}
+
+cmd_troubleshoot() {
+    parse_opts "$@"
+    local fix="${OPT_PROFILE:-}"   # reuse: --fix passed as positional
+    local what="${GL_POS[0]:-all}"
+    local rc=0
+    _t()  { printf '  %-42s' "$1"; }
+    _ok() { printf '\e[32m ok\e[0m\n'; }
+    _no() { printf '\e[31m FAIL\e[0m  %s\n' "$1"; rc=1; }
+    _wn() { printf '\e[33m warn\e[0m  %s\n' "$1"; }
+
+    echo "── troubleshoot ($what) ─────────────────────"
+    if [[ "$what" =~ ^(all|hardware)$ ]]; then
+        _t "AMD GPU present";        lspci -nn | grep -qi 'VGA.*AMD' && _ok || _no "no AMD VGA in lspci"
+        _t "render node";            [[ -e /dev/dri/renderD128 ]] && _ok || _no "/dev/dri/renderD128 missing"
+        _t "VA-API HEVC/AV1 encode"; vainfo 2>/dev/null | grep -qE 'VAProfile(HEVC|AV1).*Enc' && _ok || _no "install libva-mesa-driver; check vainfo"
+        _t "sunshine installed";     have sunshine && _ok || _no "pacman -S sunshine (cachyos repo)"
+        _t "sway installed";         have sway && _ok || _no "pacman -S sway"
+        _t "gamescope installed";    have gamescope && _ok || _wn "optional: pacman -S gamescope"
+    fi
+    if [[ "$what" =~ ^(all|audio)$ ]]; then
+        _t "pipewire running";       pgrep -x pipewire >/dev/null && _ok || _no "systemctl --user start pipewire"
+        _t "null sink present";      pactl list short sinks 2>/dev/null | grep -q "$(AUDIO_SINK)" && _ok || _no "systemctl --user restart gaming-null-sink.service"
+        _t "desktop default sink";   [[ -n "$(audio_default_sink)" ]] && _ok || _wn "no default sink set"
+    fi
+    if [[ "$what" =~ ^(all|input)$ ]]; then
+        _t "uinput node";            [[ -e /dev/uinput ]] && _ok || _no "modprobe uinput"
+        _t "in 'input' group";       id -nG | grep -qw input && _ok || _wn "usermod -aG input $USER; re-login"
+        _t "udev rule installed";    [[ -e /etc/udev/rules.d/71-gaming-controllers.rules ]] && _ok || _wn "./install.sh installs it"
+    fi
+    if [[ "$what" =~ ^(all|latency)$ ]]; then
+        _t "session up";             session_active && _ok || _wn "start one: gaming-launcher gaming"
+        _t "wlr capture in log";     grep -qiE 'wlr|screencopy' "$GL_STATE_DIR/sunshine.log" 2>/dev/null && _ok || _wn "no capture logs yet"
+        _t "renderer";               echo && printf '      wlr_renderer=%s (try gles2 if sway wont start)\n' "$(gl_cfg general wlr_renderer vulkan)"
+    fi
+    if [[ "$what" =~ ^(all)$ ]]; then
+        _t "polaris not clashing";   ! pgrep -x polaris >/dev/null && _ok || _wn "polaris is running on the default ports"
+    fi
+    echo "────────────────────────────────────────────"
+    return $rc
+}
+
+cmd_config() {
+    parse_opts "$@"
+    case "${GL_POS[0]:-show}" in
+        show)  for f in "$GL_CONF" "$GL_PROFILES" "$GL_SUNSHINE_CONF"; do
+                   echo "### $f"; [[ -r "$f" ]] && cat "$f" || echo "(missing)"; echo; done ;;
+        edit)  "${EDITOR:-nano}" "$GL_CONF" ;;
+        path)  printf '%s\n' "$GL_CONFIG_DIR" ;;
+        *)     die "config show|edit|path" ;;
+    esac
+}
+
+cmd_help() {
+    cat <<EOF
+gaming-launcher $VERSION - isolated Sunshine gaming session for Hyprland
+
+USAGE
+  gaming-launcher <command> [options]
+
+COMMANDS
+  gaming [game] [-p PROFILE] [-r WxH] [-f FPS]
+                       start the isolated session (and optionally launch a game)
+  steam                start the session for Steam Big Picture streaming
+  quality [PROFILE]    show / switch quality profile
+  quality --auto on|off   toggle the automatic quality step-down daemon
+  secondscreen on|off  start/stop the 2nd Sunshine (port 48020). Pick the mode
+                       in Moonlight/Artemis by app: "Zweitmonitor" (extra headless
+                       monitor, muted) · "Hauptmonitor spiegeln" (primary as-is,
+                       audio passthrough) · "Remote Work" (headless + primary OFF)
+  status               show session / encoder / client state
+  stop                 tear the session down, restore desktop audio + input
+  list-games           list installed Steam games
+  add-game NAME TARGET add a Sunshine app entry (TARGET = cmd | steam:APPID)
+  audio headset on|off  also play the streamed game on this machine
+  audio status|restore  null-sink state / put the desktop default sink back
+  logs [analyze]       tail or analyse logs
+  benchmark            quick VA-API / capture probe
+  troubleshoot [hardware|audio|input|latency]
+  config show|edit|path
+  session-up|session-run|session-down|session-prep|session-postp   (lifecycle)
+  install-completions  install shell completion for this shell
+  version | help
+
+PROFILES  $(quality_list 2>/dev/null | csv || echo 'gaming-high-perf, balanced, remote-work, custom')
+
+FILES
+  config   $GL_CONFIG_DIR/
+  logs     $GL_STATE_DIR/
+EOF
+}
+
+cmd_install_completions() {
+    local sh; sh=$(basename "${SHELL:-bash}")
+    case "$sh" in
+        fish) mkdir -p "$HOME/.config/fish/completions"
+              cp "$GL_ROOT/completions/gaming-launcher.fish" "$HOME/.config/fish/completions/" && ok "fish completion installed" ;;
+        bash) mkdir -p "$HOME/.local/share/bash-completion/completions"
+              cp "$GL_ROOT/completions/gaming-launcher.bash" "$HOME/.local/share/bash-completion/completions/gaming-launcher" && ok "bash completion installed" ;;
+        *)    warn "no completion bundled for '$sh'" ;;
+    esac
+}
+
+# ---- lifecycle hooks --------------------------------------------------
+cmd_session_up()   { session_up; }
+cmd_session_run()  {
+    session_up
+    local p; p=$(state_get .sway_pid)
+    info "supervising sway pid $p"
+    while kill -0 "$p" 2>/dev/null; do
+        sleep 2
+        # keep the in-session Sunshine alive too
+        local sp; sp=$(state_get .sunshine_pid)
+        if [[ "$sp" =~ ^[0-9]+$ ]] && ! kill -0 "$sp" 2>/dev/null; then
+            warn "in-session Sunshine (pid $sp) died - restarting"
+            session_start_sunshine
+        fi
+    done
+    info "sway exited; cleaning up"
+    session_down
+}
+cmd_session_down() { session_down; }
+
+# called by Sunshine global_prep_cmd "do"  (env has SUNSHINE_CLIENT_*)
+cmd_session_prep() {
+    local w="${SUNSHINE_CLIENT_WIDTH:-}" h="${SUNSHINE_CLIENT_HEIGHT:-}" f="${SUNSHINE_CLIENT_FPS:-}"
+    info "client connected: ${w:-?}x${h:-?}@${f:-?}"
+    [[ -n "$w$h$f" ]] && is_int "${w:-x}" && is_int "${h:-x}" && is_int "${f:-x}" \
+        && session_set_mode "$w" "$h" "$f"
+    audio_ensure_sink || true
+    local prof; prof=$(state_get .profile); [[ -z "$prof" || "$prof" == null ]] && prof=$(DEFAULT_PROFILE)
+    if [[ "$(quality_field "$prof" audio_isolation true)" == true ]]; then
+        audio_pin_start || true   # keep desktop apps (Brave, …) on the real sink
+    fi
+    [[ "$(quality_field "$prof" input_isolation true)" == true ]] && input_isolate || true
+    [[ "$(gl_cfg adapter enabled false)" == true ]] && _adapter enable || true
+    true
+}
+
+# called by Sunshine global_prep_cmd "undo"
+cmd_session_postp() {
+    info "client disconnected"
+    audio_pin_stop || true
+    audio_restore_default || true
+    input_release || true
+    _adapter disable >/dev/null 2>&1 || true
+    state_unset active_app
+    true
+}
+
+# =======================================================================
+main() {
+    local cmd="${1:-help}"; shift || true
+    case "$cmd" in
+        gaming)              cmd_gaming "$@" ;;
+        steam)              cmd_steam "$@" ;;
+        run)                cmd_run "$@" ;;
+        quality)            cmd_quality "$@" ;;
+        secondscreen|screen) cmd_secondscreen "$@" ;;
+        secondscreen-run)   cmd_secondscreen run "$@" ;;
+        secondscreen-app)   cmd_secondscreen_app "${1:-extra}" ;;
+        secondscreen-app-undo) cmd_secondscreen_app_undo ;;
+        status)             cmd_status "$@" ;;
+        stop)               cmd_stop "$@" ;;
+        list-games)         cmd_list_games "$@" ;;
+        audio)              cmd_audio "$@" ;;
+        add-game)           cmd_add_game "$@" ;;
+        logs)               cmd_logs "$@" ;;
+        benchmark|bench)    cmd_benchmark "$@" ;;
+        troubleshoot|diag)  cmd_troubleshoot "$@" ;;
+        config)             cmd_config "$@" ;;
+        session-up)         cmd_session_up "$@" ;;
+        session-run)        cmd_session_run "$@" ;;
+        session-down)       cmd_session_down "$@" ;;
+        session-prep)       cmd_session_prep "$@" ;;
+        session-postp)      cmd_session_postp "$@" ;;
+        _adapter-loop)      cmd__adapter_loop "$@" ;;
+        _audio-reconcile)   audio_reconcile ;;
+        install-completions) cmd_install_completions "$@" ;;
+        version|--version|-V) echo "gaming-launcher $VERSION" ;;
+        help|--help|-h)     cmd_help ;;
+        *)                  err "unknown command: $cmd"; cmd_help; exit 1 ;;
+    esac
+}
+main "$@"

@@ -1,0 +1,21 @@
+[Unit]
+Description=Isolated headless Sway + Sunshine gaming session
+Documentation=file:%h/Projects/pes/sunshine-virtual/README.md
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+# Do not run alongside a stock Sunshine/Polaris on the default ports.
+Conflicts=polaris.service
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/gaming-launcher session-run
+ExecStop=/usr/local/bin/gaming-launcher session-down
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+# Keep the session off the journal-killed cgroup cleanup path long enough to reap Steam.
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

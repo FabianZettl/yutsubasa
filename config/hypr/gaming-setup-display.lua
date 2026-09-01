@@ -1,0 +1,12 @@
+-- Managed by gaming-launcher (`gaming-launcher display`). Do NOT hand-edit.
+-- Loaded from hyprland.lua via:
+--     pcall(dofile, os.getenv("HOME") .. "/.config/hypr/gaming-setup-display.lua")
+-- so it is re-read on every `hyprctl reload`.
+--
+-- When no second display is active this file defines nothing.
+-- `gaming-launcher display` rewrites the block between the markers with an
+-- hl.monitor{} rule for the headless output it created, then runs `hyprctl reload`.
+
+-- BEGIN gaming-launcher
+-- (inactive)
+-- END gaming-launcher

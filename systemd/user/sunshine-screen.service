@@ -1,0 +1,19 @@
+[Unit]
+Description=Second-screen Sunshine (extra monitor on the desktop Hyprland, port 48020)
+# Needs the desktop compositor; the launcher also waits for the Hyprland IPC
+# itself, so a slightly-early start just retries.
+After=graphical-session.target
+PartOf=graphical-session.target
+Conflicts=polaris.service
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/gaming-launcher secondscreen-run
+ExecStop=/usr/local/bin/gaming-launcher secondscreen off
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

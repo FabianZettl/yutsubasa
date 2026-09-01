@@ -1,0 +1,35 @@
+# Tag common game controllers for the Sunshine gaming session.
+# Installed to /etc/udev/rules.d/71-gaming-controllers.rules by install.sh.
+#
+# This does not "hard" isolate a pad from same-user desktop apps (Linux has no
+# per-process evdev ACL for that); it gives every known pad a stable tag +
+# uaccess so gaming-launcher can identify it and Steam Input can grab it
+# in-session. Real desktop isolation of a pad's pointer/keyboard endpoints is
+# done live by gaming-launcher via Hyprland (see lib/input.sh).
+
+ACTION=="remove", GOTO="gaming_controllers_end"
+SUBSYSTEM!="input", GOTO="gaming_controllers_hidraw"
+
+# Anything the kernel already classifies as a joystick.
+ENV{ID_INPUT_JOYSTICK}=="1", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+
+# Sony DualShock 4 / DualSense (USB + Bluetooth).
+ATTRS{idVendor}=="054c", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+# Microsoft Xbox controllers + wireless adapters.
+ATTRS{idVendor}=="045e", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+# Nintendo Switch Pro / Joy-Con.
+ATTRS{idVendor}=="057e", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+# Valve Steam Controller / Steam Deck controls.
+ATTRS{idVendor}=="28de", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+# 8BitDo (common vendor IDs).
+ATTRS{idVendor}=="2dc8", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+ATTRS{idVendor}=="20bc", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+# Google Stadia controller.
+ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="9400", TAG+="uaccess", TAG+="gaming-controller", ENV{GAMING_CONTROLLER}="1"
+
+GOTO="gaming_controllers_end"
+
+LABEL="gaming_controllers_hidraw"
+SUBSYSTEM=="hidraw", KERNELS=="*054c*|*045e*|*057e*|*28de*|*2dc8*|*20bc*", TAG+="uaccess", TAG+="gaming-controller"
+
+LABEL="gaming_controllers_end"
