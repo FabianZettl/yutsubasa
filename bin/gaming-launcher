@@ -427,8 +427,13 @@ _secondscreen_resume() {
 # it; absent -> Sunshine falls back to the primary monitor.
 _scr_app_cleanup() {
     audio_bridge_stop || true
-    audio_pin_stop || true
-    audio_restore_default || true
+    # Don't disturb audio the gaming session owns: if a gaming stream is up
+    # (e.g. this cleanup was triggered by _secondscreen_suspend), its own
+    # session-postp handles audio_pin_stop / audio_restore_default.
+    if ! session_active; then
+        audio_pin_stop || true
+        audio_restore_default || true
+    fi
     _hc output remove "$SCR_HEADLESS" >/dev/null 2>&1 || true
     _scr_write_rule "" "" "" ""      # also re-enables a disabled primary
     _scr_dispatch "hl.dsp.focus({ monitor = \"$(_scr_primary)\" })"
@@ -814,11 +819,16 @@ cmd_session_prep() {
         && session_set_mode "$w" "$h" "$f"
     audio_ensure_sink || true
     local prof; prof=$(state_get .profile); [[ -z "$prof" || "$prof" == null ]] && prof=$(DEFAULT_PROFILE)
+
+    # Stand the second-screen instance down FIRST: stopping its service runs
+    # `secondscreen off` -> _scr_app_cleanup -> audio_pin_stop, which would kill
+    # the gaming watcher we start just below if the order were reversed.
+    [[ "$(quality_field "$prof" input_isolation true)" == true ]] && _secondscreen_suspend
+
     if [[ "$(quality_field "$prof" audio_isolation true)" == true ]]; then
         audio_pin_start || true   # keep desktop apps (Brave, …) on the real sink
     fi
     if [[ "$(quality_field "$prof" input_isolation true)" == true ]]; then
-        _secondscreen_suspend      # only one instance may own the client pointer
         input_isolate || true      # desktop ignores passthrough devs + bridge -> session
     fi
     [[ "$(gl_cfg adapter enabled false)" == true ]] && _adapter enable || true
