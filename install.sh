@@ -174,6 +174,17 @@ else
 fi
 [[ -e "$SUN/apps.json" ]] && good "kept existing apps.json" || render "$REPO/config/sunshine/apps.json.in" "$SUN/apps.json"
 
+# Repair a "Steam Big Picture" entry whose cmd lost its @LAUNCHER@ path (older
+# renders produced " run steam" -> Sunshine: "Unable to find executable [run]").
+if (( ! CHECK )) && have jq && [[ -e "$SUN/apps.json" ]] \
+   && jq -e '.apps[]? | select(.name=="Steam Big Picture") | select((.cmd|test("gaming-launcher"))|not)' "$SUN/apps.json" >/dev/null 2>&1; then
+    tmp=$(mktemp)
+    jq --arg c "$BIN_LINK run steam" \
+       '(.apps[] | select(.name=="Steam Big Picture") | .cmd) = $c' \
+       "$SUN/apps.json" >"$tmp" && mv "$tmp" "$SUN/apps.json" \
+       && warn "repaired broken 'Steam Big Picture' cmd -> $BIN_LINK run steam"
+fi
+
 # ES-DE as a gaming app (with a rasterised icon), if installed and not already there
 if have es-de && [[ -e "$SUN/apps.json" ]] && ! grep -q '"ES-DE"' "$SUN/apps.json"; then
     esde_img=""
