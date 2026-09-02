@@ -97,7 +97,11 @@ session_start_sunshine() {
     have "$sbin" || { warn "sunshine not installed; run install.sh"; return 1; }
 
     if pgrep -af "sunshine .*$GL_SUNSHINE_CONF" >/dev/null; then
-        info "our Sunshine instance already running"
+        # already up - make sure state points at the LIVE pid, or the supervise
+        # loop spins every 2s ("died - restarting" / "already running").
+        local rp; rp=$(pgrep -f "sunshine .*$(basename "$GL_SUNSHINE_CONF")" | head -1)
+        [[ "$rp" =~ ^[0-9]+$ ]] && state_set_raw sunshine_pid "$rp"
+        info "our Sunshine instance already running (pid ${rp:-?})"
         return 0
     fi
     if pgrep -x sunshine >/dev/null && ! pgrep -af "$GL_SUNSHINE_CONF" >/dev/null; then

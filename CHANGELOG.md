@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.5 (2026-09-02)
+
+- **Fix: session supervisor spun every 2 s.** After a `systemctl restart` race,
+  `state.json`'s `sunshine_pid` could point at a dead PID while a live in-session
+  Sunshine ran under a different one. The supervise loop then logged
+  "died - restarting" / "already running" every 2 s forever (a periodic
+  `pgrep -af` + log write during the stream).
+  - `session_start_sunshine` now refreshes `sunshine_pid` on the "already
+    running" path.
+  - supervise loop re-checks `pgrep` before declaring Sunshine dead, and polls
+    every 5 s instead of 2 s.
+
 ## 0.7.4 (2026-09-02)
 
 - **Fix: periodic micro-stutter every ~3 s during a stream.** The audio-routing
