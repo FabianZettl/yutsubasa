@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.4 (2026-09-02)
+
+- **Fix: periodic micro-stutter every ~3 s during a stream.** The audio-routing
+  watcher's backstop ran `audio_reconcile` every 3 s — a ~90-140 ms sweep
+  (`swaymsg get_tree` IPC + full `ps` + BFS + `pw-dump`) that contended with the
+  nested compositor rendering the game.
+  - backstop interval 3 s → 20 s (the event-driven `pactl subscribe` path still
+    reacts instantly to real changes).
+  - `_session_pid_set` cached for 10 s (dropped at each stream start).
+  - `pw-dump` only runs when a sink-input actually lacks a PID.
+  - `pactl subscribe` events are burst-coalesced (one reconcile per flurry).
+
 ## 0.7.3 (2026-09-02)
 
 - `fec_percentage` 20 → 30 on both instances — more forward-error-correction

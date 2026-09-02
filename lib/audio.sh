@@ -84,13 +84,24 @@ audio_restore_default() {
 # PIDs that belong to the isolated gaming session: every window Sway shows +
 # all their descendants. Survives ES-DE detaching an emulator to systemd (the
 # emulator's window still shows in Sway) and unreadable /proc/<pid>/environ.
+#
+# CACHED (TTL 10s): a swaymsg get_tree round-trip + a full `ps` + BFS on every
+# reconcile was a ~140ms CPU spike that contended with the compositor rendering
+# the game (a visible micro-stutter every few seconds). During a stream the set
+# barely changes; audio_pin_start drops the cache so each stream starts fresh.
+_SESSION_PID_CACHE="$GL_RUN_DIR/session-pids"
 _session_pid_set() {
-    local sway_root wins
+    local ttl=10 age
+    if [[ -f "$_SESSION_PID_CACHE" ]]; then
+        age=$(( $(date +%s) - $(stat -c %Y "$_SESSION_PID_CACHE" 2>/dev/null || echo 0) ))
+        (( age >= 0 && age < ttl )) && { cat "$_SESSION_PID_CACHE"; return 0; }
+    fi
+    local sway_root wins out
     sway_root=$(state_get .sway_pid)
     [[ "$sway_root" =~ ^[0-9]+$ ]] || return 0
     wins=$(gsway -t get_tree 2>/dev/null | jq -r '[.. | .pid? // empty] | map(select(. > 0)) | unique | .[]' 2>/dev/null)
     # BFS from {sway_root} ∪ {window pids} over a full ppid map
-    awk -v seeds="$sway_root $(tr '\n' ' ' <<<"$wins")" '
+    out=$(awk -v seeds="$sway_root $(tr '\n' ' ' <<<"$wins")" '
         { ppid[$1]=$2; kids[$2]=kids[$2] " " $1 }
         END{
             n=split(seeds,q," "); for(i=1;i<=n;i++) if(q[i]!=""){ if(!(q[i] in seen)){seen[q[i]]=1; print q[i]} }
@@ -98,7 +109,9 @@ _session_pid_set() {
             while(changed){ changed=0
                 for(p in seen){ m=split(kids[p],c," "); for(j=1;j<=m;j++) if(c[j]!="" && !(c[j] in seen)){seen[c[j]]=1; print c[j]; changed=1} }
             }
-        }' <(ps -eo pid=,ppid= 2>/dev/null)
+        }' <(ps -eo pid=,ppid= 2>/dev/null))
+    printf '%s\n' "$out" >"$_SESSION_PID_CACHE.$$" 2>/dev/null && mv "$_SESSION_PID_CACHE.$$" "$_SESSION_PID_CACHE" 2>/dev/null
+    printf '%s\n' "$out"
 }
 
 audio_reconcile() {
@@ -127,13 +140,9 @@ audio_reconcile() {
     local sessset; sessset=" $(_session_pid_set | tr '\n' ' ') "
     local wl; wl=$(state_get .wl_display); [[ "$wl" == null ]] && wl=""
 
-    # client.id -> pid map, for sink-inputs without application.process.id.
-    local cpid=""
-    if have pw-dump && have jq; then
-        cpid=$(pw-dump 2>/dev/null | jq -r '
-            .[] | select(.type=="PipeWire:Interface:Client")
-            | "\(.id) \(.info.props["pipewire.sec.pid"] // "")"' 2>/dev/null)
-    fi
+    # client.id -> pid map: only built if a sink-input turns up without an
+    # application.process.id (pw-dump is a full graph dump - not free).
+    local cpid="" cpid_built=0
 
     # _in_session <pid> : the one test that decides routing.
     _in_session() {
@@ -147,7 +156,16 @@ audio_reconcile() {
     local id si apid cid nm bin pid
     while IFS='|' read -r id si apid cid nm bin; do
         [[ -n "$id" ]] || continue
-        pid="$apid"; [[ "$pid" =~ ^[0-9]+$ ]] || pid=$(awk -v c="$cid" '$1==c{print $2; exit}' <<<"$cpid")
+        pid="$apid"
+        if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+            if (( ! cpid_built )); then
+                cpid_built=1
+                have pw-dump && have jq && cpid=$(pw-dump 2>/dev/null | jq -r '
+                    .[] | select(.type=="PipeWire:Interface:Client")
+                    | "\(.id) \(.info.props["pipewire.sec.pid"] // "")"' 2>/dev/null)
+            fi
+            pid=$(awk -v c="$cid" '$1==c{print $2; exit}' <<<"$cpid")
+        fi
 
         if _in_session "$pid"; then
             # must sit on sink-sunshine itself (the captured monitor), not a sibling
@@ -172,23 +190,29 @@ audio_pin_start() {
     have pactl || return 0
     local sink; sink=$(AUDIO_SINK)
     audio_pin_stop  # no duplicates
+    rm -f "$_SESSION_PID_CACHE"   # fresh PID set for this stream
     audio_reconcile
-    # Watcher: re-run the rule on every PipeWire change. setsid -> its own process
-    # group/session, so `kill -<pgid>` in audio_pin_stop takes down the whole
-    # thing (bash + pactl subscribe) and it survives the prep-cmd exiting.
+    # Watcher: re-run the rule on PipeWire changes. Event-driven; a slow backstop
+    # only catches events `pactl subscribe` might miss. setsid -> its own process
+    # group so `kill -<pgid>` in audio_pin_stop takes the whole thing down.
     setsid bash -c '
         L="$0"
-        # slow backstop (killed via the setsid process group by audio_pin_stop)
-        ( while sleep 3; do "$L" _audio-reconcile >/dev/null 2>&1; done ) &
-        # event-driven, main loop
+        # slow backstop (20s: reconcile is a ~140ms sweep - do not hammer it)
+        ( while sleep 20; do "$L" _audio-reconcile >/dev/null 2>&1; done ) &
+        # event-driven main loop, with burst-coalescing so a flurry of events
+        # (Sunshine creating -stereo/-surround sinks on connect) is one reconcile
         pactl subscribe 2>/dev/null | grep --line-buffered -E "sink-input|on server" \
-            | while read -r _; do "$L" _audio-reconcile >/dev/null 2>&1; done
+            | while read -r _; do
+                while read -r -t 0.3 _; do :; done
+                "$L" _audio-reconcile >/dev/null 2>&1
+              done
     ' "$GL_ROOT/bin/gaming-launcher" </dev/null >/dev/null 2>&1 &
     echo $! >"$AUDIO_PIN_PIDFILE"
     ok "audio routing active: session apps -> $sink (streamed), desktop apps + default -> real device"
 }
 
 audio_pin_stop() {
+    rm -f "$_SESSION_PID_CACHE"
     [[ -f "$AUDIO_PIN_PIDFILE" ]] || return 0
     local p; p=$(<"$AUDIO_PIN_PIDFILE")
     if [[ "$p" =~ ^[0-9]+$ ]]; then
