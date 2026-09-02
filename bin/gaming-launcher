@@ -25,7 +25,7 @@ source "$LIB/quality.sh"
 source "$LIB/input.sh"
 source "$LIB/steam.sh"
 
-VERSION="0.7.1"
+VERSION="0.7.2"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -72,7 +72,7 @@ _apply_res_fps_opts() {
 cmd_gaming() {
     parse_opts "$@"
     local game="${GL_POS[0]:-}"
-    local profile="${OPT_PROFILE:-$(DEFAULT_PROFILE)}"
+    local profile; profile="$(quality_resolve "${OPT_PROFILE:-$(DEFAULT_PROFILE)}")"
 
     local miss=()
     have sway || miss+=(sway); have swaymsg || miss+=(sway); have jq || miss+=(jq)
@@ -121,7 +121,8 @@ cmd_steam() { cmd_gaming --profile "${2:-$(DEFAULT_PROFILE)}" ; }
 cmd_run() {
     parse_opts "$@"
     local what="${GL_POS[0]:-steam}"
-    local profile="${OPT_PROFILE:-$(state_get .profile)}"; [[ -z "$profile" || "$profile" == null ]] && profile="$(DEFAULT_PROFILE)"
+    # an app entry may carry a stale --profile (renamed/removed) - never abort on it
+    local profile; profile="$(quality_resolve "${OPT_PROFILE:-$(state_get .profile)}")"
     state_set active_app "$what"
 
     # Steam is single-instance: a desktop Steam will just eat this launch and the
@@ -678,14 +679,14 @@ cmd_add_game() {
     parse_opts "$@"
     local name="${GL_POS[0]:?usage: add-game <name> <cmd|steam:APPID>}"
     local target="${GL_POS[1]:?usage: add-game <name> <cmd|steam:APPID>}"
-    local profile="${OPT_PROFILE:-$(DEFAULT_PROFILE)}"
     need jq
     local cmd d=""
     (( OPT_DIRECT )) && d=" --direct"
+    # no --profile: there is one tuned profile; `run` picks it up from state/config.
     if [[ "$target" == steam:* || "$target" =~ ^[0-9]+$ ]]; then
-        cmd="$LAUNCHER_PATH run $(steam_resolve_appid "$target" || die "no such Steam app") --profile $profile$d"
+        cmd="$LAUNCHER_PATH run $(steam_resolve_appid "$target" || die "no such Steam app")$d"
     else
-        cmd="$LAUNCHER_PATH run $target --profile $profile"
+        cmd="$LAUNCHER_PATH run $target"
     fi
     local img; img=$(_app_art "$target" 2>/dev/null || true)
     local tmp; tmp=$(mktemp)

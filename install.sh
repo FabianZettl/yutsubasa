@@ -185,6 +185,15 @@ if (( ! CHECK )) && have jq && [[ -e "$SUN/apps.json" ]] \
        && warn "repaired broken 'Steam Big Picture' cmd -> $BIN_LINK run steam"
 fi
 
+# Strip stale `--profile <name>` from app cmds (the quality ladder is gone; a
+# renamed/removed profile there makes `run` abort before it launches the game).
+if (( ! CHECK )) && have jq && [[ -e "$SUN/apps.json" ]] \
+   && jq -e '.apps[]? | select(.cmd|test(" --profile "))' "$SUN/apps.json" >/dev/null 2>&1; then
+    tmp=$(mktemp)
+    jq '(.apps[].cmd) |= (gsub(" --profile +[^ ]+"; ""))' "$SUN/apps.json" >"$tmp" \
+       && mv "$tmp" "$SUN/apps.json" && warn "stripped stale '--profile …' from app cmds"
+fi
+
 # ES-DE as a gaming app (with a rasterised icon), if installed and not already there
 if have es-de && [[ -e "$SUN/apps.json" ]] && ! grep -q '"ES-DE"' "$SUN/apps.json"; then
     esde_img=""

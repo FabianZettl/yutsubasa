@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.2 (2026-09-02)
+
+- **Fix: apps wouldn't launch after 0.7.1.** `apps.json` entries carried
+  `--profile gaming-high-perf`; with the ladder gone, `run` hit `quality_apply`
+  → `die "unknown profile"` and exited before `exec`ing the game (ES-DE, every
+  steam-sync title). Steam Big Picture was unaffected (no `--profile`).
+  - `run` / `gaming` now resolve an unknown/renamed `--profile` to the default
+    with a warning instead of aborting (`quality_resolve`).
+  - `add-game` no longer writes `--profile` into app cmds.
+  - `install.sh` strips stale `--profile …` from a kept `apps.json`.
+
 ## 0.7.1 (2026-09-02)
 
 - **One tuned quality profile.** Collapsed `gaming-high-perf` / `balanced` /

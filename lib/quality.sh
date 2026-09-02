@@ -28,6 +28,20 @@ quality_list() { conf_sections "$GL_PROFILES"; }
 
 quality_exists() { conf_sections "$GL_PROFILES" | grep -qx "$1"; }
 
+# Echo a profile that actually exists: the argument if valid, else the default
+# (with a warning). For non-interactive callers (Sunshine app entries) that must
+# not abort on a stale/renamed `--profile`.
+quality_resolve() {
+    local want=$1 def; def=$(DEFAULT_PROFILE)
+    if [[ -n "$want" && "$want" != null ]] && quality_exists "$want"; then
+        printf '%s' "$want"
+    else
+        [[ -n "$want" && "$want" != null && "$want" != "$def" ]] \
+            && warn "profile '$want' not found; using '$def'" >&2
+        printf '%s' "$def"
+    fi
+}
+
 # Apply a profile: record it in state and, if a session is live, re-apply mode +
 # push codec/bitrate ceilings into the Sunshine config.
 # quality_apply <profile> [skip_mode]
