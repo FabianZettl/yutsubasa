@@ -317,8 +317,11 @@ cmd_secondscreen() {
     need "$(SUNSHINE_BIN)"; need jq
     have hyprctl || die "this needs the running Hyprland desktop (hyprctl)"
     if (( foreground )); then
-        wait_for 1800 bash -c '_s=$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | head -1); [ -n "$_s" ] && HYPRLAND_INSTANCE_SIGNATURE="$_s" hyprctl version >/dev/null 2>&1' \
-            || die "desktop Hyprland IPC never appeared - not starting second screen"
+        # wait for the desktop compositor to actually enumerate outputs, not just
+        # answer IPC - on a cold boot `hyprctl version` succeeds seconds before
+        # monitors + WAYLAND_DISPLAY are ready, and Sunshine then dies displayless.
+        wait_for 1800 bash -c '_s=$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | head -1); [ -n "$_s" ] && [ "$(HYPRLAND_INSTANCE_SIGNATURE="$_s" hyprctl -j monitors 2>/dev/null | jq -r "length" 2>/dev/null)" -ge 1 ] 2>/dev/null' \
+            || die "desktop Hyprland has no monitors yet - not starting second screen"
     fi
     _hc version >/dev/null 2>&1 || die "cannot reach the desktop Hyprland IPC"
     grep -q 'gaming-setup-display' "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
@@ -333,23 +336,70 @@ cmd_secondscreen() {
     render_scr_conf
     render_scr_apps
 
-    : >"$GL_STATE_DIR/sunshine-display.out"
-    setsid "$(SUNSHINE_BIN)" "$SCR_CONF" </dev/null >>"$GL_STATE_DIR/sunshine-display.out" 2>&1 &
-    state_set_raw scr_pid "$!"
-    state_set scr_kind idle
-    disown
+    _scr_spawn_sunshine
     ok "second-screen Sunshine on :48020. In Moonlight/Artemis pick an app:"
     ok "  \"Zweitmonitor\"  extra headless monitor ($(gl_cfg secondscreen position left) of your desktop, muted)"
     ok "  \"Hauptmonitor spiegeln\"  your primary as-is, audio passthrough"
     ok "  \"Remote Work\"  headless + primary monitor OFF"
 
     if (( foreground )); then
-        local sp; sp=$(state_get .scr_pid)
-        info "supervising second-screen Sunshine (pid $sp)"
-        while [[ "$sp" =~ ^[0-9]+$ ]] && kill -0 "$sp" 2>/dev/null; do sleep 3; done
-        info "second-screen Sunshine exited; cleaning up"
+        info "supervising second-screen Sunshine (pid $(state_get .scr_pid))"
+        local restarts=0
+        while :; do
+            local sp; sp=$(state_get .scr_pid)
+            if [[ ! "$sp" =~ ^[0-9]+$ ]] || ! kill -0 "$sp" 2>/dev/null; then
+                info "second-screen Sunshine exited; cleaning up"; break
+            fi
+            # displayless-start: the streaming loop dies but the PID lingers
+            # (tray/web only). Restart with a freshly-resolved WAYLAND_DISPLAY.
+            if grep -qE 'Video failed to find working encoder|Unable to find display or encoder' \
+                 "$GL_STATE_DIR/sunshine-display.out" 2>/dev/null; then
+                if (( restarts >= 5 )); then
+                    err "second-screen Sunshine still displayless after $restarts restarts - giving up"
+                    err "  fix WAYLAND_DISPLAY for the desktop and: systemctl --user restart sunshine-screen.service"
+                    break
+                fi
+                restarts=$((restarts + 1))
+                warn "second-screen Sunshine came up displayless - restart $restarts/5"
+                kill "$sp" 2>/dev/null; pkill -TERM -f "$SCR_PAT" 2>/dev/null || true
+                sleep 3
+                _scr_spawn_sunshine
+            fi
+            sleep 3
+        done
         _scr_teardown quiet
     fi
+}
+
+# Desktop Hyprland's WAYLAND_DISPLAY (systemd env first, then the wayland-N
+# socket that isn't the gaming session's).
+_scr_desktop_wl() {
+    local w gw s
+    w=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^WAYLAND_DISPLAY=//p')
+    [[ -n "$w" && -S "$XDG_RUNTIME_DIR/$w" ]] && { printf '%s' "$w"; return; }
+    gw=$(state_get .wl_display)
+    for s in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+        [[ -S "$s" ]] || continue
+        s=${s##*/}
+        [[ "$s" == "$gw" ]] && continue
+        printf '%s' "$s"; return
+    done
+}
+
+# (re)launch the second-screen Sunshine with an explicit desktop environment.
+_scr_spawn_sunshine() {
+    local wl sig
+    wl=$(_scr_desktop_wl)
+    sig="${HYPRLAND_INSTANCE_SIGNATURE:-$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | head -1)}"
+    [[ -n "$wl" ]] || warn "could not resolve the desktop WAYLAND_DISPLAY - Sunshine may not find a monitor"
+    : >"$GL_STATE_DIR/sunshine-display.out"
+    setsid env ${wl:+WAYLAND_DISPLAY="$wl"} ${sig:+HYPRLAND_INSTANCE_SIGNATURE="$sig"} \
+        XDG_CURRENT_DESKTOP=Hyprland \
+        "$(SUNSHINE_BIN)" "$SCR_CONF" </dev/null >>"$GL_STATE_DIR/sunshine-display.out" 2>&1 &
+    state_set_raw scr_pid "$!"
+    state_set scr_kind idle
+    disown 2>/dev/null || true
+    info "second-screen Sunshine started (pid $(state_get .scr_pid), WAYLAND_DISPLAY=${wl:-?})"
 }
 
 render_scr_conf() {

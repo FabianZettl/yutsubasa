@@ -109,10 +109,17 @@ audio_reconcile() {
     [[ -z "$real" || "$real" == null || "$real" == "$sink"* ]] && real=$(audio_default_sink)
     [[ -z "$real" || "$real" == "$sink"* ]] && return 0
 
+    # every sink-sunshine* sink id (the captured one + Sunshine's -stereo /
+    # -surround siblings, which it does NOT capture)
     local nullids
     nullids=" $(pactl list short sinks 2>/dev/null | awk '$2 ~ /^sink-sunshine/ {print $1}' | tr '\n' ' ') "
     [[ "$nullids" != "  " ]] || return 0
     _is_null() { [[ "$nullids" == *" $1 "* ]]; }
+
+    # id of the ONE sink Sunshine records (sink-sunshine.monitor) - session
+    # audio must land here exactly, not on a -stereo/-surround sibling.
+    local sink_id
+    sink_id=$(pactl list short sinks 2>/dev/null | awk -v n="$sink" '$2==n {print $1; exit}')
 
     [[ "$(pactl get-default-sink 2>/dev/null)" != "$real" ]] && pactl set-default-sink "$real" 2>/dev/null
 
@@ -143,7 +150,8 @@ audio_reconcile() {
         pid="$apid"; [[ "$pid" =~ ^[0-9]+$ ]] || pid=$(awk -v c="$cid" '$1==c{print $2; exit}' <<<"$cpid")
 
         if _in_session "$pid"; then
-            _is_null "$si" || pactl move-sink-input "$id" "$sink" 2>/dev/null   # -> streamed
+            # must sit on sink-sunshine itself (the captured monitor), not a sibling
+            [[ -n "$sink_id" && "$si" == "$sink_id" ]] || pactl move-sink-input "$id" "$sink" 2>/dev/null
         else
             _is_null "$si" && pactl move-sink-input "$id" "$real" 2>/dev/null   # -> real device
         fi
