@@ -1,9 +1,9 @@
 # Steam → Sunshine Gaming Sync
 
 Scans your installed Steam library and adds the games to the **isolated
-gaming-Sunshine instance** of the `sunshine-virtual` stack
-(`~/Projects/pes/sunshine-virtual`), so you can launch them straight from
-Moonlight / Artemis.
+gaming-Sunshine instance** of [Yutsubasa](../), so you can launch them straight
+from Moonlight / Artemis. Requires `gaming-launcher` on `PATH` (i.e. run the
+stack's `./install.sh` first).
 
 
 ## What it does
