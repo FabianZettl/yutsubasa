@@ -16,7 +16,7 @@ complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "bench
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "troubleshoot" -d "run diagnostics"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "config"       -d "show/edit config"
 
-complete -c gaming-launcher -n "__fish_seen_subcommand_from quality gaming steam" -l profile -x -a "gaming-high-perf balanced remote-work custom"
+complete -c gaming-launcher -n "__fish_seen_subcommand_from quality gaming steam" -l profile -x -a "gaming custom"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from quality" -l auto -x -a "on off"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from gaming secondscreen" -l res -x
 complete -c gaming-launcher -n "__fish_seen_subcommand_from gaming secondscreen" -l fps -x

@@ -177,7 +177,7 @@ gsway() { SWAYSOCK="$GL_SWAY_SOCK" swaymsg "$@"; }
 # ---------------------------------------------------------------------------
 gl_cfg() { conf_get "$GL_CONF" "$@"; }
 
-DEFAULT_PROFILE()   { gl_cfg general default_profile "gaming-high-perf"; }
+DEFAULT_PROFILE()   { gl_cfg general default_profile "gaming"; }
 DEFAULT_WIDTH()     { gl_cfg general width  2560; }
 DEFAULT_HEIGHT()    { gl_cfg general height 1440; }
 DEFAULT_FPS()       { gl_cfg general fps    120; }

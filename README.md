@@ -161,23 +161,31 @@ first** (single-instance — it would swallow the in-session launch), then launc
 
 ---
 
-## Quality profiles
+## Quality — one tuned profile
 
-| Profile | Output | Codec | Bitrate ceiling |
-|---|---|---|---|
-| `gaming-high-perf` | 1440p / 120 | AV1 | 50 Mbps |
-| `balanced` | 1080p / 60 | HEVC | 25 Mbps |
-| `remote-work` | 1080p / 30 | H.264 | 10 Mbps |
-| `custom` | free | — | — |
+There is a single profile, `gaming` (plus `custom` for experiments), fixed for
+**stable framerate, low input delay and fast client decode**:
+
+| | |
+|---|---|
+| **Codec** | **H.264 only** — most predictable on the single VCN, shortest/most consistent hardware decode on phones · handhelds · TVs. HEVC and AV1 are *not* advertised. |
+| **Resolution / FPS** | whatever the client asks for, used as-is — capped only at 2560×1440 / 144 so nobody requests 4K. No scaling on either end. |
+| **Rate control** | VAAPI, no strict HRD buffer — the encoder never stalls waiting for the rate model. |
+| **Isolation** | audio + input always on. |
+
+Bitrate is a **client** setting, not a server one. On a wired LAN start around
+**35–40 Mbps at 1440p**, **20–25 at 1080p**; in Moonlight/Artemis also turn frame
+pacing on, HDR off, decoder = hardware.
 
 ```sh
-gaming-launcher quality balanced        # applies live if a session is up
-gaming-launcher quality --auto on       # opt-in: step down on sustained loss
+gaming-launcher quality              # show the active profile
+gaming-launcher quality custom       # scratch profile — set codec = hevc / av1, gamescope args
 ```
 
-The client's requested resolution / FPS is applied on connect, clamped to the
-profile ceiling; bitrate + codec are negotiated by Moonlight ⇄ Sunshine. Edit
-`~/.config/gaming-setup/profiles.conf`.
+Edit `~/.config/gaming-setup/profiles.conf` (`[gaming]` = the real thing,
+`[custom]` = tinker). The old high-perf / balanced / remote-work ladder and the
+auto step-down adapter are gone — switching profiles mid-session re-writes
+`sunshine.conf` and hitches the stream.
 
 ---
 

@@ -25,6 +25,8 @@ output_name = @OUTPUT_ID@
 
 encoder      = vaapi
 adapter_name = /dev/dri/renderD128
+# H.264 only (mode = 1 = don't advertise): a second screen / remote-work surface
+# wants the fastest, most responsive decode, not codec efficiency.
 av1_mode  = 1
 hevc_mode = 1
 

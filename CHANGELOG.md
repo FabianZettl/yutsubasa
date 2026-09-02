@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 (2026-09-02)
+
+- **One tuned quality profile.** Collapsed `gaming-high-perf` / `balanced` /
+  `remote-work` / `custom` to just **`gaming`** (+ a scratch `custom`). Tuned for
+  no frame drops, low input delay and short decode:
+  - **H.264 only** on both instances — `av1_mode` / `hevc_mode` set to `1`
+    ("do not advertise"). The single VCN 4.0 sustains H.264 without drops, and it
+    has the shortest, most consistent hardware decode on phones / handhelds / TVs.
+  - resolution/fps taken from the client as-is (ceiling only, no forced
+    downscale); VAAPI rate control with no strict HRD buffer.
+  - **Fixed the inverted codec mapping** in `quality.sh`: Sunshine's `*_mode = 1`
+    means *disable*, not *enable* — the old `codec = av1` profile had been
+    switching AV1 *off*.
+  - the auto step-down adapter is now inert (`quality --auto` warns and no-ops).
+
 ## 0.7.0 — "First Flight" (2026-09-02)
 
 First public release.

@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# quality.sh - quality profiles + gamescope argument builder.
+# quality.sh - the quality profile + gamescope argument builder.
 #
-# A "profile" is a section in ~/.config/gaming-setup/profiles.conf, e.g.
+# There is ONE tuned profile, `gaming` (+ a scratch `custom`), in
+# ~/.config/gaming-setup/profiles.conf:
 #
-#   [gaming-high-perf]
-#   max_width  = 2560
-#   max_height = 1440
-#   max_fps    = 120
-#   codec      = av1        # av1 | hevc | h264  (preferred; client may downgrade)
-#   bitrate    = 50000      # kbps ceiling advertised to the client
-#   gamescope  = -F fsr --hdr-enabled
+#   [gaming]
+#   max_width  = 2560       # safety ceiling only - the client's own request is
+#   max_height = 1440       #   used as-is below this (no forced downscale)
+#   max_fps    = 144
+#   codec      = h264       # h264 default: predictable framerate on one VCN,
+#                           #   shortest client decode. hevc / av1 in `custom`.
+#   bitrate    = 40000      # advisory - the real number is a client setting
+#   gamescope  =
 #   audio_isolation = true
 #   input_isolation = true
 #
-# Bitrate/codec are negotiated by Moonlight <-> Sunshine at runtime; the profile
-# only sets ceilings and the preferred codec.  Resolution/fps are applied to the
-# headless output on connect (session_set_mode) using the client's request,
-# clamped to the profile ceiling.
+# Bitrate is negotiated by Moonlight <-> Sunshine; the profile sets the codec and
+# a resolution ceiling. Resolution/fps come from the client on connect
+# (session_set_mode), clamped to the ceiling.
 
 quality_field() {  # quality_field <profile> <key> <default>
     local p=$1 k=$2 d=${3-}
@@ -47,9 +48,10 @@ quality_apply() {
     br=$(quality_field "$p" bitrate 0)
 
     # Reflect codec preference into sunshine.conf (takes effect on next stream).
+    # Sunshine: *_mode = 1 means "do NOT advertise this codec"; 0 = advertise.
     if [[ -w "$GL_SUNSHINE_CONF" ]]; then
-        _sun_set av1_mode  "$([[ $codec == av1  ]] && echo 1 || echo 0)"
-        _sun_set hevc_mode "$([[ $codec == h264 ]] && echo 0 || echo 1)"
+        _sun_set av1_mode  "$([[ $codec == av1 ]] && echo 0 || echo 1)"
+        _sun_set hevc_mode "$([[ $codec == av1 || $codec == hevc ]] && echo 0 || echo 1)"
     fi
 
     if (( skip_mode )); then
@@ -95,20 +97,7 @@ quality_gamescope_args() {
         "$w" "$h" "$f" "$extra"
 }
 
-# One-rung step for the auto-adapter.  Order: high-perf -> balanced -> remote-work.
-quality_step_down() {
-    local cur=$1
-    case "$cur" in
-        gaming-high-perf) echo balanced ;;
-        balanced)         echo remote-work ;;
-        *)                echo "$cur" ;;
-    esac
-}
-quality_step_up() {
-    local cur=$1
-    case "$cur" in
-        remote-work) echo balanced ;;
-        balanced)    echo gaming-high-perf ;;
-        *)           echo "$cur" ;;
-    esac
-}
+# The auto-adapter is inert now: there is a single tuned profile, so there is no
+# rung to step to. These are kept as no-ops so cmd__adapter_loop stays harmless.
+quality_step_down() { echo "$1"; }
+quality_step_up()   { echo "$1"; }

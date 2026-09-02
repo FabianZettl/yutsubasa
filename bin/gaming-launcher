@@ -25,7 +25,7 @@ source "$LIB/quality.sh"
 source "$LIB/input.sh"
 source "$LIB/steam.sh"
 
-VERSION="0.7.0"
+VERSION="0.7.1"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -174,7 +174,7 @@ cmd_quality() {
     parse_opts "$@"
     if [[ -n "$OPT_AUTO" ]]; then
         case "$OPT_AUTO" in
-            on)  _adapter enable ;;
+            on)  warn "the auto step-down adapter is inert: there is a single tuned profile now"; _adapter disable ;;
             off) _adapter disable ;;
             *)   die "--auto on|off" ;;
         esac
@@ -802,8 +802,7 @@ COMMANDS
   gaming [game] [-p PROFILE] [-r WxH] [-f FPS]
                        start the isolated session (and optionally launch a game)
   steam                start the session for Steam Big Picture streaming
-  quality [PROFILE]    show / switch quality profile
-  quality --auto on|off   toggle the automatic quality step-down daemon
+  quality [PROFILE]    show / switch quality profile (gaming | custom)
   secondscreen on|off  start/stop the 2nd Sunshine (port 48020). Pick the mode
                        in Moonlight/Artemis by app: "Zweitmonitor" (extra headless
                        monitor, muted) · "Hauptmonitor spiegeln" (primary as-is,
@@ -822,7 +821,7 @@ COMMANDS
   install-completions  install shell completion for this shell
   version | help
 
-PROFILES  $(quality_list 2>/dev/null | csv || echo 'gaming-high-perf, balanced, remote-work, custom')
+PROFILES  $(quality_list 2>/dev/null | csv || echo 'gaming, custom')  (H.264, client-native resolution)
 
 FILES
   config   $GL_CONFIG_DIR/

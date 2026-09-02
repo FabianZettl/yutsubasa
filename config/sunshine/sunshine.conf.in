@@ -27,12 +27,14 @@ capture = wlr
 # ---- AMD VCN 4.0 encode (RX 7800 XT, single VCN unit) -----------------
 encoder      = vaapi
 adapter_name = /dev/dri/renderD128
-# Advertise AV1 + HEVC; Moonlight/Artemis pick within client capability,
-# H.264 is the automatic fallback. gaming-launcher rewrites av1_mode/hevc_mode
-# per quality profile.
+# H.264 only, on purpose: the single VCN sustains it without frame drops and it
+# has the shortest / most consistent hardware decode on phones, handhelds and
+# TVs. mode = 1 means "do NOT advertise this codec" (0 would still offer it).
+# `gaming-launcher quality custom` (codec = hevc / av1) re-enables them.
 av1_mode  = 1
 hevc_mode = 1
-# Latency-leaning VAAPI rate control.
+# Latency-leaning VAAPI rate control (no strict HRD buffer -> encoder never
+# stalls waiting for the rate model to catch up).
 vaapi_strict_rc_buffer = disabled
 
 # ---- audio isolation --------------------------------------------------

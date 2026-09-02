@@ -9,9 +9,9 @@ _gaming_launcher() {
         COMPREPLY=( $(compgen -W "$cmds" -- "$cur") ); return
     fi
     case "$prev" in
-        --profile|-p) COMPREPLY=( $(compgen -W "gaming-high-perf balanced remote-work custom" -- "$cur") ); return;;
+        --profile|-p) COMPREPLY=( $(compgen -W "gaming custom" -- "$cur") ); return;;
         --auto)       COMPREPLY=( $(compgen -W "on off" -- "$cur") ); return;;
-        quality)      COMPREPLY=( $(compgen -W "gaming-high-perf balanced remote-work custom --auto" -- "$cur") ); return;;
+        quality)      COMPREPLY=( $(compgen -W "gaming custom --auto" -- "$cur") ); return;;
         secondscreen) COMPREPLY=( $(compgen -W "on off status right left up down --res --fps" -- "$cur") ); return;;
         audio)        COMPREPLY=( $(compgen -W "headset status restore" -- "$cur") ); return;;
         troubleshoot) COMPREPLY=( $(compgen -W "hardware audio input latency" -- "$cur") ); return;;
