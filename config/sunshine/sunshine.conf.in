@@ -49,7 +49,7 @@ gamepad = auto
 # ---- network ------------------------------------------------------
 origin_web_ui_allowed = lan
 upnp = disabled
-fec_percentage = 20
+fec_percentage = 30
 
 # ---- session hooks (adaptive resolution / audio / input isolation) ----
 global_prep_cmd = [{"do":"@LAUNCHER@ session-prep","undo":"@LAUNCHER@ session-postp"}]

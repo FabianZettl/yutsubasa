@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3 (2026-09-02)
+
+- `fec_percentage` 20 → 30 on both instances — more forward-error-correction
+  headroom for lossy Wi-Fi links (helps against packet loss, not jitter).
+
 ## 0.7.2 (2026-09-02)
 
 - **Fix: apps wouldn't launch after 0.7.1.** `apps.json` entries carried

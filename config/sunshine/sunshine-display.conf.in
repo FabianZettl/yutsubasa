@@ -43,7 +43,7 @@ audio_sink   = @SINK@
 gamepad = auto
 origin_web_ui_allowed = lan
 upnp = disabled
-fec_percentage = 20
+fec_percentage = 30
 
 # No global_prep_cmd - each Moonlight app (Zweitmonitor / Hauptmonitor spiegeln /
 # Remote Work) carries its own per-app prep-cmd do/undo that toggles GL-SCREEN,

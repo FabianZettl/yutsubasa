@@ -25,7 +25,7 @@ source "$LIB/quality.sh"
 source "$LIB/input.sh"
 source "$LIB/steam.sh"
 
-VERSION="0.7.2"
+VERSION="0.7.3"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
