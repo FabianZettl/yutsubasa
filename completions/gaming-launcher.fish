@@ -1,5 +1,5 @@
 # fish completion for gaming-launcher
-set -l cmds gaming steam quality secondscreen audio status stop list-games add-game logs benchmark troubleshoot config install-completions version help
+set -l cmds gaming steam quality secondscreen audio status stop list-games add-game logs benchmark troubleshoot config theme install-completions version help
 
 complete -c gaming-launcher -f
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "gaming"       -d "start isolated gaming session"
@@ -15,6 +15,7 @@ complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "logs"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "benchmark"    -d "VA-API / capture probe"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "troubleshoot" -d "run diagnostics"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "config"       -d "show/edit config"
+complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "theme"        -d "reskin the Sunshine web UI"
 
 complete -c gaming-launcher -n "__fish_seen_subcommand_from quality gaming steam" -l profile -x -a "gaming custom"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from quality" -l auto -x -a "on off"
@@ -24,4 +25,5 @@ complete -c gaming-launcher -n "__fish_seen_subcommand_from secondscreen" -a "on
 complete -c gaming-launcher -n "__fish_seen_subcommand_from audio" -a "headset status restore"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from troubleshoot" -a "hardware audio input latency"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from config" -a "show edit path"
+complete -c gaming-launcher -n "__fish_seen_subcommand_from theme" -a "apply revert status"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from logs" -a "analyze"

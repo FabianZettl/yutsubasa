@@ -1,0 +1,94 @@
+/* BEGIN yutsubasa-theme
+ * Appended to /usr/share/sunshine/web/assets/css/sunshine.css by
+ *   gaming-launcher theme apply
+ * Everything between the BEGIN/END markers is managed - edit the source at
+ * config/web-theme/yutsubasa.css and re-apply. Revert with `theme revert`.
+ * ------------------------------------------------------------------------ */
+
+/* yutsubasa palette - a new selectable theme AND the default dark look
+   (Sunshine's design system reads --color-* everywhere; redefining them here
+   cascades through the whole UI). */
+[data-theme="yutsubasa"],
+:root:not([data-theme]),
+[data-theme="dark"],
+[data-bs-theme="dark"] {
+    --color-primary:        #35d0c4;
+    --color-primary-hover:  #5fe0d6;
+    --color-primary-light:  #0c302e;
+    --color-accent:         #f5a524;
+    --color-accent-hover:   #ffbb52;
+    --color-accent-light:   #3a2a0a;
+    --color-success:        #34c77b;
+    --color-success-hover:  #4fd992;
+    --color-success-light:  #0a2417;
+    --color-danger:         #f0506e;
+    --color-danger-hover:   #f4778d;
+    --color-danger-light:   #2e0f16;
+    --color-warning:        #f5a524;
+    --color-warning-hover:  #ffbb52;
+    --color-warning-light:  #3a2a0a;
+
+    --color-bg-base:        #0f1420;
+    --color-bg-subtle:      #151c2b;
+    --color-bg-muted:       #1f2a3f;
+    --color-surface:        #172033;
+    --color-surface-raised: #1f2a41;
+    --color-border:         #283650;
+
+    --color-text-base:      #e9edf6;
+    --color-text-muted:     #9fabc2;
+    --color-text-subtle:    #6b7890;
+
+    /* bridge the ones Bootstrap components read directly */
+    --bs-primary:            var(--color-primary);
+    --bs-body-bg:            var(--color-bg-base);
+    --bs-body-color:         var(--color-text-base);
+    --bs-border-color:       var(--color-border);
+    --bs-emphasis-color:     var(--color-text-base);
+    --bs-secondary-color:    var(--color-text-muted);
+    --bs-link-color:         var(--color-primary);
+    --bs-link-hover-color:   var(--color-primary-hover);
+    --bs-code-color:         var(--color-accent);
+    color-scheme: dark;
+}
+
+/* subtle depth on the shell */
+body { background:
+    radial-gradient(1200px 600px at 15% -10%, #16233b 0%, transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, #17322f 0%, transparent 55%),
+    var(--color-bg-base); }
+
+.navbar-sunshine {
+    background: linear-gradient(180deg, #131b2c 0%, #0f1420 100%);
+    border-bottom: 1px solid var(--color-border);
+}
+
+/* wordmark: keep Sunshine's logo image, swap the text label */
+.navbar-sunshine .navbar-brand { position: relative; color: transparent !important; }
+.navbar-sunshine .navbar-brand::after {
+    content: "yutsubasa";
+    position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
+    margin-left: .55rem; white-space: nowrap;
+    font-weight: 700; letter-spacing: .02em; font-size: 1.05rem;
+    color: var(--color-text-base);
+}
+.navbar-sunshine .navbar-brand::first-letter { color: var(--color-primary); }
+
+/* accents */
+a { color: var(--color-primary); }
+a:hover { color: var(--color-primary-hover); }
+.card-sunshine:hover, .card:hover { border-color: var(--color-primary); }
+.btn-primary {
+    --bs-btn-bg: var(--color-primary);
+    --bs-btn-border-color: var(--color-primary);
+    --bs-btn-hover-bg: var(--color-primary-hover);
+    --bs-btn-hover-border-color: var(--color-primary-hover);
+    --bs-btn-active-bg: var(--color-primary-hover);
+    --bs-btn-color: #04211f;
+    --bs-btn-hover-color: #04211f;
+}
+.form-control:focus, .form-select:focus,
+:focus-visible { outline-color: var(--color-primary); border-color: var(--color-primary); box-shadow: 0 0 0 .2rem rgba(53, 208, 196, .25); }
+.badge.bg-primary { background-color: var(--color-primary) !important; color: #04211f; }
+::selection { background: rgba(53, 208, 196, .3); }
+/* END yutsubasa-theme */

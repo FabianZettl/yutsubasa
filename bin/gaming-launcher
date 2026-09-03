@@ -24,8 +24,9 @@ source "$LIB/audio.sh"
 source "$LIB/quality.sh"
 source "$LIB/input.sh"
 source "$LIB/steam.sh"
+source "$LIB/theme.sh"
 
-VERSION="0.7.5"
+VERSION="0.8.0"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -607,6 +608,7 @@ cmd_status() {
     if [[ -n "$(state_get .scr_suspended)" && "$(state_get .scr_suspended)" != null ]]; then
         printf '  \e[2mSecond screen: suspended (:48020) while the gaming stream owns input\e[0m\n'
     fi
+    theme_status | sed 's/^/  /'
     echo "$line"
     if pgrep -x polaris >/dev/null; then
         printf '  \e[33mnote\e[0m: polaris is running - it will clash on the default ports\n'
@@ -792,6 +794,16 @@ cmd_config() {
     esac
 }
 
+cmd_theme() {
+    parse_opts "$@"
+    case "${GL_POS[0]:-status}" in
+        apply)  theme_apply "${GL_POS[1]:-}" ;;
+        revert) theme_revert ;;
+        status) theme_status ;;
+        *)      die "theme apply|revert|status" ;;
+    esac
+}
+
 cmd_help() {
     cat <<EOF
 gaming-launcher $VERSION - isolated Sunshine gaming session for Hyprland
@@ -817,6 +829,7 @@ COMMANDS
   logs [analyze]       tail or analyse logs
   benchmark            quick VA-API / capture probe
   troubleshoot [hardware|audio|input|latency]
+  theme apply|revert|status   reskin the Sunshine web UI (yutsubasa style; needs sudo)
   config show|edit|path
   session-up|session-run|session-down|session-prep|session-postp   (lifecycle)
   install-completions  install shell completion for this shell
@@ -924,6 +937,7 @@ main() {
         logs)               cmd_logs "$@" ;;
         benchmark|bench)    cmd_benchmark "$@" ;;
         troubleshoot|diag)  cmd_troubleshoot "$@" ;;
+        theme)              cmd_theme "$@" ;;
         config)             cmd_config "$@" ;;
         session-up)         cmd_session_up "$@" ;;
         session-run)        cmd_session_run "$@" ;;

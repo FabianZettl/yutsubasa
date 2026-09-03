@@ -1,0 +1,13 @@
+# Re-apply the yutsubasa Sunshine web-UI theme after a `sunshine` package
+# install/upgrade overwrites /usr/share/sunshine/web/. Installed to
+# /etc/pacman.d/hooks/ by ./install.sh (asks first).
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = sunshine
+
+[Action]
+Description = Re-applying the yutsubasa Sunshine web theme...
+When = PostTransaction
+Exec = /bin/sh -c 'command -v gaming-launcher >/dev/null 2>&1 && gaming-launcher theme apply --quiet || true'

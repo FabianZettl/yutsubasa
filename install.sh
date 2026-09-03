@@ -51,6 +51,9 @@ if (( UNINSTALL )); then
     run make -C "$REPO/src" clean 2>/dev/null || true
     [[ -e "$UDEV_RULE" ]] && { sudo_run rm -f "$UDEV_RULE"; sudo_run udevadm control --reload; }
     [[ -e /etc/pacman.d/hooks/sunshine-setcap.hook ]] && sudo_run rm -f /etc/pacman.d/hooks/sunshine-setcap.hook
+    # web UI theme: revert files + drop the pacman hook
+    have gaming-launcher && run gaming-launcher theme revert 2>/dev/null || true
+    [[ -e /etc/pacman.d/hooks/zzz-yutsubasa-theme.hook ]] && sudo_run rm -f /etc/pacman.d/hooks/zzz-yutsubasa-theme.hook
     if [[ -f "$XDG_CONFIG_HOME/hypr/hyprland.lua" ]] && grep -qE 'gaming-setup-(display|input)' "$XDG_CONFIG_HOME/hypr/hyprland.lua"; then
         run sed -i -E '/gaming-launcher \(managed\)/d; /gaming-launcher: second-display/d; /gaming-setup-(display|input)\.lua/d' \
             "$XDG_CONFIG_HOME/hypr/hyprland.lua"
@@ -295,6 +298,24 @@ elif have cc && have wayland-scanner && pkg-config --exists wayland-client libev
 else
     warn "missing build tools (cc / wayland-scanner / libevdev / xkbcommon) - input bridge NOT built"
     warn "the launcher still runs from $REPO/src if you 'make -C $REPO/src' later"
+fi
+
+# ---------------------------------------------------------------------------
+say "5c/8  Sunshine web UI theme (yutsubasa style)"
+THEME_HOOK=/etc/pacman.d/hooks/zzz-yutsubasa-theme.hook
+if (( CHECK )); then
+    printf '  %s(would)%s install %s + run: gaming-launcher theme apply\n' "$c_d" "$c_0" "$THEME_HOOK"
+elif [[ ! -d /usr/share/sunshine/web ]]; then
+    warn "sunshine web assets not found - skipping (install 'sunshine' first)"
+elif ask "reskin the Sunshine web UI in the yutsubasa style? (sudo; themes both :47990 and :48021)"; then
+    if sudo install -Dm644 "$REPO/config/pacman/zzz-yutsubasa-theme.hook" "$THEME_HOOK"; then
+        good "pacman hook installed (re-themes after a 'sunshine' upgrade)"
+    else
+        warn "could not install the pacman hook - re-run 'gaming-launcher theme apply' after sunshine updates"
+    fi
+    "$BIN_LINK" theme apply || warn "theme apply failed - try it by hand later"
+else
+    warn "skipped - apply anytime with: gaming-launcher theme apply   (revert: theme revert)"
 fi
 
 # ---------------------------------------------------------------------------

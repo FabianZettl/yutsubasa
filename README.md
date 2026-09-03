@@ -278,6 +278,24 @@ default-sink hijack is reverted continuously while a client is connected.
 
 ---
 
+## Web UI theme
+
+The Sunshine web UI can be reskinned in the yutsubasa style (a dark teal/amber
+palette + logo):
+
+```sh
+gaming-launcher theme apply     # needs sudo — writes /usr/share/sunshine/web/
+gaming-launcher theme status
+gaming-launcher theme revert
+```
+
+It appends a managed block to Sunshine's `assets/css/sunshine.css` (which is
+already a design-token system) and swaps the logo PNGs, keeping a `.yts-orig`
+backup of each. `install.sh` installs a **pacman hook** that re-applies it after
+a `sunshine` package upgrade (which would otherwise reset it). Both web UIs
+(`:47990` and `:48021`) share the assets, so the theme covers both. Edit
+`config/web-theme/yutsubasa.css` / `logo.svg` and re-run `theme apply`.
+
 ## Config & logs
 
 | Path | |

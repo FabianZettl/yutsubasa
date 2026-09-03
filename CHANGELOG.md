@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 (2026-09-03)
+
+- **`gaming-launcher theme apply|revert|status`** — reskins the Sunshine web UI
+  in the yutsubasa style (dark teal/amber palette + logo). Appends a managed
+  block to `assets/css/sunshine.css` and swaps the logo PNGs, keeping
+  `.yts-orig` backups. `install.sh` installs a pacman hook that re-applies it
+  after a `sunshine` upgrade; `status` / `troubleshoot` flag it if the hook is
+  missing. Themes both web UIs (`:47990` + `:48021`). Needs `sudo`
+  (`/usr/share/sunshine/web/` is package-owned). Source: `config/web-theme/`.
+
 ## 0.7.5 (2026-09-02)
 
 - **Fix: session supervisor spun every 2 s.** After a `systemctl restart` race,
