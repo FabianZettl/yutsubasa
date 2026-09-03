@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.1 (2026-09-03)
+
+- **gamescope + Steam games:** `steam steam://rungameid/N` is fire-and-forget, so
+  gamescope tore down with the launcher and the game came up black. New
+  `bin/gl-steam-hold` becomes gamescope's child - it kicks off the launch and
+  blocks until the game exits; gamescope also gets `-e`.
+- Vulkan-layer isolation for the wrapped launch: disable all implicit layers,
+  keep only `VK_LAYER_FROG_gamescope_wsi` (MESA_anti_lag / steam_overlay / MAKO /
+  fossilize sit ahead of it and break its swapchain hook). **Caveat:** this only
+  reaches the game when `gl-steam-hold` starts a *fresh* Steam client; if one is
+  already running in the session the game inherits its env. Full fix (per-game
+  Steam launch options) is next.
+
 ## 0.9.0 (2026-09-03)
 
 - **Per-game gamescope wrapper.** `add-game … --gamescope` (or `run … --gamescope`

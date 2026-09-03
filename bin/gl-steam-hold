@@ -1,0 +1,30 @@
+#!/bin/sh
+# gl-steam-hold <appid> [direct|big-picture]
+#
+# Launch a Steam game and BLOCK until it exits. Used as the child of a gamescope
+# wrapper: `steam steam://rungameid/N` is fire-and-forget (it hands off to the
+# running Steam client and returns), so without this gamescope would tear down
+# immediately and orphan the game - it comes up black. Here gamescope's child
+# stays alive exactly as long as the game, and Sunshine's auto-detach still sees
+# a clean exit when the game closes.
+set -u
+appid="${1:?usage: gl-steam-hold <appid> [direct|big-picture]}"
+mode="${2:-direct}"
+
+if [ "$mode" = big-picture ]; then
+    steam -gamepadui "steam://rungameid/$appid" >/dev/null 2>&1 &
+else
+    steam "steam://rungameid/$appid" >/dev/null 2>&1 &
+fi
+
+# wait up to 120s for the game process to appear (Proton setup / shader compile)
+i=0
+while [ "$i" -lt 120 ]; do
+    pgrep -f "AppId=$appid" >/dev/null 2>&1 && break
+    i=$((i + 1)); sleep 1
+done
+
+# then hold until it's gone
+while pgrep -f "AppId=$appid" >/dev/null 2>&1; do
+    sleep 5
+done

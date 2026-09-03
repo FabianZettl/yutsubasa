@@ -26,7 +26,7 @@ source "$LIB/input.sh"
 source "$LIB/steam.sh"
 source "$LIB/theme.sh"
 
-VERSION="0.9.0"
+VERSION="0.9.1"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -142,7 +142,20 @@ cmd_run() {
     quality_apply "$profile" 1 >/dev/null 2>&1 || true   # codec only; keep client resolution
 
     local target; target="$(_resolve_game_cmd "$what")"
-    local gsargs; gsargs="$(quality_gamescope_args)"
+    local gsargs; gsargs="$(quality_gamescope_args "$target")"
+
+    # gamescope + a fire-and-forget `steam steam://rungameid/N`: gamescope exits
+    # with the launcher and orphans the game (black screen). Swap in gl-steam-hold
+    # as gamescope's child - it kicks off the launch and blocks until the game
+    # exits, so gamescope lives exactly as long as the game.
+    if [[ -n "$gsargs" && "$target" == *rungameid/* ]]; then
+        local appid="${target##*rungameid/}"; appid="${appid%% *}"
+        local mode=direct; [[ "$target" == *-gamepadui* ]] && mode=big-picture
+        local hold; hold="$(dirname "$LAUNCHER_PATH")/gl-steam-hold"
+        [[ -x "$hold" ]] || hold="$GL_ROOT/bin/gl-steam-hold"
+        target="$hold $appid $mode"
+    fi
+
     info "run: $what -> ${gsargs:+gamescope … -- }$target"
     # shellcheck disable=SC2086
     exec $gsargs $target
@@ -169,7 +182,7 @@ _resolve_game_cmd() {
 
 _run_in_session() {
     local cmd="$1"
-    gsway exec -- "env _GL_SESSION=1 $(quality_gamescope_args) $cmd" >/dev/null 2>&1 \
+    gsway exec -- "env _GL_SESSION=1 $(quality_gamescope_args "$cmd") $cmd" >/dev/null 2>&1 \
         && ok "started in session: $cmd" \
         || warn "could not start '$cmd' in session"
 }

@@ -103,8 +103,15 @@ _sun_set() {
 # present. It renders into the nested Sway as a normal client, so the Sunshine
 # capture path is unchanged. Verified working nested on wlroots 0.20 + gles2.
 #
+# $1 (optional): the target command about to be exec'd. For a Steam launch
+# (`steam …`) gamescope gets `-e` so it doesn't exit when the fire-and-forget
+# `steam steam://rungameid/…` handler returns (without it the game is orphaned
+# and comes up black), and the Steam-overlay Vulkan layer is disabled (it fights
+# gamescope's WSI hook: "Creating swapchain for non gamescope swapchain …").
+#
 # Echoes a space-joined argv ending in `--`; empty string when not wrapping.
 quality_gamescope_args() {
+    local target="${1:-}"
     case "${OPT_GAMESCOPE:-}" in
         0) return 0 ;;
         1) : ;;
@@ -123,6 +130,23 @@ quality_gamescope_args() {
     [[ "$(gl_cfg gamescope rt true)"             == true ]] && a+=(--rt)
     [[ "$(gl_cfg gamescope grab_cursor false)"   == true ]] && a+=(--force-grab-cursor)
 
+    local steam_pre=""
+    if [[ "$target" == steam\ * || "$target" == *steam://* || "$target" == *-gamepadui* ]]; then
+        a+=(-e)   # Steam input integration
+        # `steam steam://rungameid/N` is fire-and-forget - it exits and gamescope
+        # would tear down with it, orphaning the game (black screen). The caller
+        # wraps the target in gl-steam-hold, which outlives the game.
+        #
+        # Vulkan-layer isolation: other implicit layers (MESA_anti_lag,
+        # steam_overlay, MAKO, fossilize) sit ahead of gamescope's WSI layer and
+        # break its swapchain hook ("Creating swapchain for non-Gamescope
+        # swapchain. Hooking has failed."). Disable all implicit layers, keep
+        # only gamescope-wsi. NOTE: this only reaches the game when gl-steam-hold
+        # starts a fresh Steam client; if a client is already up in the session
+        # the game inherits ITS env instead.
+        steam_pre="env DISABLE_VK_LAYER_VALVE_steam_overlay_1=1 VK_LOADER_LAYERS_DISABLE=~implicit~ VK_LOADER_LAYERS_ENABLE=VK_LAYER_FROG_gamescope_wsi_x86_64,VK_LAYER_FROG_gamescope_wsi_i386 "
+    fi
+
     # FSR: render internally at render_scale x client res, upscale to client res
     local rs; rs=$(gl_cfg gamescope render_scale 1.0)
     if [[ -n "$rs" && "$rs" != "1.0" && "$rs" != "1" ]]; then
@@ -136,6 +160,7 @@ quality_gamescope_args() {
     # shellcheck disable=SC2206
     [[ -n "$extra" ]] && a+=($extra)
     a+=(--)
+    printf '%s' "$steam_pre"
     printf '%s ' "${a[@]}"
 }
 

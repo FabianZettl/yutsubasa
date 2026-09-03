@@ -45,7 +45,8 @@ if (( UNINSTALL )); then
     run systemctl --user daemon-reload 2>/dev/null || true
     [[ -L /usr/local/bin/gaming-launcher ]] && sudo_run rm -f /usr/local/bin/gaming-launcher
     [[ -L "$HOME/.local/bin/gaming-launcher" ]] && rm -f "$HOME/.local/bin/gaming-launcher"
-    for p in /usr/local/bin/sunshine-input-bridge "$HOME/.local/bin/sunshine-input-bridge"; do
+    for p in /usr/local/bin/gl-steam-hold "$HOME/.local/bin/gl-steam-hold" \
+             /usr/local/bin/sunshine-input-bridge "$HOME/.local/bin/sunshine-input-bridge"; do
         [[ -e "$p" ]] && { [[ -w "$(dirname "$p")" ]] && run rm -f "$p" || sudo_run rm -f "$p"; }
     done
     run make -C "$REPO/src" clean 2>/dev/null || true
@@ -275,6 +276,15 @@ else
     # re-render sunshine.conf/apps.json so @LAUNCHER@ points at the fallback path
     render "$REPO/config/sunshine/sunshine.conf.in" "$SUN/sunshine.conf"
     render "$REPO/config/sunshine/apps.json.in" "$SUN/apps.json"
+fi
+# gl-steam-hold next to the launcher (used by the gamescope wrapper for Steam games)
+run chmod +x "$REPO/bin/gl-steam-hold"
+if (( ! CHECK )); then
+    HOLD_LINK="$(dirname "$BIN_LINK")/gl-steam-hold"
+    ln -sfn "$REPO/bin/gl-steam-hold" "$HOLD_LINK" 2>/dev/null \
+      || sudo -n ln -sfn "$REPO/bin/gl-steam-hold" "$HOLD_LINK" 2>/dev/null \
+      || sudo ln -sfn "$REPO/bin/gl-steam-hold" "$HOLD_LINK" 2>/dev/null \
+      || warn "could not link gl-steam-hold -> $HOLD_LINK (the launcher falls back to $REPO/bin)"
 fi
 
 # ---------------------------------------------------------------------------
