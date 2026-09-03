@@ -26,6 +26,13 @@ quality_field() {  # quality_field <profile> <key> <default>
 
 quality_list() { conf_sections "$GL_PROFILES"; }
 
+# _profile_set <profile> <key> <value>  - upsert a key under [profile] in
+# profiles.conf.
+_profile_set() {
+    [[ -f "$GL_PROFILES" ]] || die "no profiles.conf at $GL_PROFILES"
+    ini_upsert "$GL_PROFILES" "$1" "$2" "$3"
+}
+
 quality_exists() { conf_sections "$GL_PROFILES" | grep -qx "$1"; }
 
 # Echo a profile that actually exists: the argument if valid, else the default
@@ -165,7 +172,3 @@ quality_gamescope_args() {
     printf '%s ' "${a[@]}"
 }
 
-# The auto-adapter is inert now: there is a single tuned profile, so there is no
-# rung to step to. These are kept as no-ops so cmd__adapter_loop stays harmless.
-quality_step_down() { echo "$1"; }
-quality_step_up()   { echo "$1"; }

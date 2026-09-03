@@ -40,7 +40,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # ---------------------------------------------------------------------------
 if (( UNINSTALL )); then
     say "uninstalling"
-    run systemctl --user disable --now sunshine-gaming.service sunshine-screen.service gaming-quality-adapter.service gaming-null-sink.service yutsubasa-status.service 2>/dev/null || true
+    run systemctl --user disable --now sunshine-gaming.service sunshine-screen.service gaming-null-sink.service yutsubasa-status.service 2>/dev/null || true
     run rm -f "$UNIT_DIR/sunshine-gaming.service" "$UNIT_DIR/sunshine-screen.service" "$UNIT_DIR/gaming-quality-adapter.service" "$UNIT_DIR/gaming-null-sink.service" "$UNIT_DIR/yutsubasa-status.service"
     run systemctl --user daemon-reload 2>/dev/null || true
     [[ -L /usr/local/bin/gaming-launcher ]] && sudo_run rm -f /usr/local/bin/gaming-launcher
@@ -145,6 +145,7 @@ install_keep() {   # copy only if absent (don't clobber user edits)
 }
 install_keep "$REPO/config/gaming-setup.conf" "$CONF/gaming-setup.conf"
 install_keep "$REPO/config/profiles.conf"     "$CONF/profiles.conf"
+install_keep "$REPO/config/clients.conf"      "$CONF/clients.conf"
 run mkdir -p "$CONF/sway"
 # sway/config is machine-generated, not meant for user edits - always refresh
 # (a changed copy is backed up once).
@@ -333,7 +334,7 @@ fi
 
 # ---------------------------------------------------------------------------
 say "6/8  systemd user units"
-for u in sunshine-gaming.service sunshine-screen.service gaming-quality-adapter.service gaming-null-sink.service yutsubasa-status.service; do
+for u in sunshine-gaming.service sunshine-screen.service gaming-null-sink.service yutsubasa-status.service; do
     if (( CHECK )); then printf '  %s(would)%s install unit %s\n' "$c_d" "$c_0" "$u"; continue; fi
     sed -e "s|/usr/local/bin/gaming-launcher|$BIN_LINK|g" \
         -e "s|/usr/local/bin/gl-status-serve|$(dirname "$BIN_LINK")/gl-status-serve|g" \
@@ -371,7 +372,6 @@ elif ask "autostart BOTH Sunshine instances on login (gaming :47989 + second scr
 else
     warn "not autostarted - use: gaming-launcher gaming / gaming-launcher secondscreen on"
 fi
-good "quality-adapter unit installed (opt-in via: gaming-launcher quality --auto on)"
 
 run mkdir -p "$HOME/.config/fish/completions" "$HOME/.local/share/bash-completion/completions"
 run cp "$REPO/completions/gaming-launcher.fish" "$HOME/.config/fish/completions/"

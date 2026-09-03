@@ -10,7 +10,7 @@ gaming-launcher status
 ```
 
 Logs: `~/.local/state/gaming-launcher/` — `launcher.log`, `session.log`
-(Sway stdout/stderr), `sunshine.log`, `sunshine.out`, `quality-adapter.log`.
+(Sway stdout/stderr), `sunshine.log`, `sunshine.out`.
 Session unit: `journalctl --user -u sunshine-gaming -f`.
 
 ---
@@ -116,9 +116,9 @@ Target: < 50 ms end-to-end on LAN at 1080p60.
 2. Moonlight stats overlay (Ctrl+Alt+Shift+S) — decode/network/host split.
 3. Host-side: `sunshine.log` capture path — `dmabuf` good, `shm` adds a memcpy
    (expected on AMD VAAPI today, still fine ≤ 1440p).
-4. Reduce: `gaming-launcher quality balanced`, wired LAN, 5 GHz/6 GHz only, raise
-   client FEC.
-5. `gaming-launcher quality --auto on` to let it step down on sustained loss.
+4. Reduce: lower the client bitrate, wired LAN or 5 GHz/6 GHz only, raise client
+   FEC.
+5. Per-client supersampling off, or set `render_scale` < 1 for that link.
 
 ## Moonlight can't find / connect to the host
 

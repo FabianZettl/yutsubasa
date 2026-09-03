@@ -197,6 +197,60 @@ gaming-launcher add-game "Celeste" steam:504230   # cover art pulled from your S
 # restart the gaming session so Sunshine reloads its app list
 ```
 
+### Per-client supersampling
+
+Some clients (a Steam Deck, an AYN Thor…) benefit from rendering the session
+*above* the resolution they ask for and letting Sunshine downscale it for
+transport — SSAA: a cleaner, less shimmery picture at the **same** stream
+resolution and the **same** client decode cost. The extra work is GPU render
+time on the host.
+
+Sunshine's `prep_cmd` never tells us *which* device connected — only the
+resolution it requests — so a client is matched on that:
+
+```sh
+gaming-launcher clients set "Steam Deck" 1.5 1280x720 1280x800   # 720p pick -> 1080p session
+gaming-launcher clients list
+gaming-launcher clients off "Steam Deck"
+```
+
+or from the **Clients panel on the status page** (`http://localhost:47992`),
+which lists your paired devices with a factor dropdown + match field.
+`config/clients.conf`:
+
+```ini
+[Steam Deck]
+match   = 1280x720, 1280x800     ; globs vs "WxH" and "WxH@FPS"
+factor  = 1.5                    ; 1 = off. session renders at <req>*factor
+enabled = true
+```
+
+`factor` is clamped to the profile's `max_width`/`max_height`. `status` shows
+`Supersample: session 1920x1080, transported 1280x720 (SSAA)` while connected.
+Leave it at `1` for heavy titles with no GPU headroom.
+
+### Render scale (stream below the client resolution)
+
+```sh
+gaming-launcher scale 0.75     # 1080p request -> ~1440x808 stream, client upscales
+gaming-launcher scale off      # stream the client's native resolution
+gaming-launcher scale status
+```
+
+The headless output — and so the encoded stream, 1:1 on the wlr capture path — is
+driven at `render_scale ×` whatever the client asked for; the client upscales the
+decoded frame to its panel. Fewer pixels means **shorter encode + decode** and
+the bitrate the client negotiated is spent on a smaller frame, so the picture
+holds up far better on a lossy Wi‑Fi link. FPS is never scaled; the result is
+rounded to a multiple of 8 and floored at 640×360. It's a per-profile key
+(`render_scale`, default profile ships at `0.75`); `status` shows both the
+streamed and the requested resolution while a client is connected.
+
+Check it took: on the first reconnect the Moonlight/Artemis stats overlay should
+report the *scaled* resolution as the video stream size. (If it still shows the
+full requested resolution, Sunshine is upscaling before encode on your capture
+path — use the gamescope `render_scale` FSR path below instead.)
+
 ### gamescope wrapper (per game)
 
 Add `--gamescope` to wrap a game in gamescope inside the session:
@@ -342,8 +396,9 @@ a `sunshine` package upgrade (which would otherwise reset it). Both web UIs
 
 | Path | |
 |---|---|
-| `~/.config/gaming-setup/gaming-setup.conf` | top-level defaults — `[general]` `[audio]` `[secondscreen]` `[adapter]` |
-| `~/.config/gaming-setup/profiles.conf` | quality profiles |
+| `~/.config/gaming-setup/gaming-setup.conf` | top-level defaults — `[general]` `[audio]` `[secondscreen]` `[gamescope]` `[status]` |
+| `~/.config/gaming-setup/profiles.conf` | quality profile + `render_scale` |
+| `~/.config/gaming-setup/clients.conf` | per-client supersampling |
 | `~/.config/gaming-setup/sway/config` | headless session compositor |
 | `~/.config/gaming-setup/sunshine/` | both instances' conf, apps, creds, state |
 | `~/.local/state/gaming-launcher/` | `launcher.log` `session.log` `sunshine.log` `sunshine-display.log` `input-bridge.log` |

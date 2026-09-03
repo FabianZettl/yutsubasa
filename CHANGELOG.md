@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.11.0 (2026-09-03)
+
+- **Per-client supersampling.** New `config/clients.conf`, the
+  `gaming-launcher clients` subcommand, and a **Clients panel on the status page**
+  (`http://localhost:47992`). A matching client renders the session *above* its
+  requested resolution (`<requested> × factor`, clamped to the profile ceiling);
+  Sunshine downscales to the requested size for transport - a cleaner, less
+  shimmery picture at the **same** stream resolution and **same** client decode
+  cost, the extra load being GPU render time here. `status` shows
+  `Supersample: session <WxH>, transported <WxH> (SSAA)`.
+  - Sunshine's `global_prep_cmd` exposes only the requested width/height/fps, not
+    the paired device name, so clients are matched on the resolution they ask for
+    (`match` = comma-separated globs vs `WxH` / `WxH@FPS`). Paired device names
+    are read from `sunshine_state.json` to populate the web panel.
+  - `gaming-launcher clients set "Steam Deck" 1.5 1280x720` · `clients list` ·
+    `clients off "Steam Deck"`. Ships with all factors at `1` (off).
+- **Removed the inert auto-quality adapter.** `gaming-launcher quality --auto`,
+  the `_adapter` loop, `[adapter]` config and `gaming-quality-adapter.service`
+  did nothing since the single-profile switch (0.7.1) and a log-tailing
+  background loop runs counter to stable streaming. Gone. (`--uninstall` still
+  cleans up an already-installed unit.)
+- **Render scale.** New `render_scale` profile key +
+  `gaming-launcher scale [0.75|off|status]` - the inverse knob: drive the headless
+  output *below* the client's requested resolution and let the client upscale
+  (shorter encode + decode, negotiated bitrate over fewer pixels). FPS never
+  scaled; rounded to a multiple of 8, floored at 640x360. Off by default (`1`);
+  supersampling takes precedence when both would apply. Only helps if Sunshine
+  streams the capture 1:1 on this path - verify with the client stats overlay.
+
 ## 0.10.1 (2026-09-03)
 
 - **Fix: `status` reported the wrong codec.** `_encoder_codec` still used the

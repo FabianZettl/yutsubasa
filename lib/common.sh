@@ -22,6 +22,7 @@ GL_RUN_DIR="$XDG_RUNTIME_DIR/gaming-launcher"
 
 GL_CONF="$GL_CONFIG_DIR/gaming-setup.conf"
 GL_PROFILES="$GL_CONFIG_DIR/profiles.conf"
+GL_CLIENTS="$GL_CONFIG_DIR/clients.conf"
 GL_SUNSHINE_DIR="$GL_CONFIG_DIR/sunshine"
 GL_SUNSHINE_CONF="$GL_SUNSHINE_DIR/sunshine.conf"
 GL_SUNSHINE_APPS="$GL_SUNSHINE_DIR/apps.json"
@@ -132,6 +133,38 @@ conf_sections() {
     local file=$1
     [[ -r "$file" ]] || return 0
     sed -nE 's/^[[:space:]]*\[(.+)\][[:space:]]*$/\1/p' "$file"
+}
+
+# ini_upsert FILE SECTION KEY VALUE
+# Set KEY = VALUE under [SECTION], creating the section (and the file) if it is
+# missing. Comments, blank lines and ordering are preserved; a new key lands at
+# the end of the section, above any trailing blank line.
+ini_upsert() {
+    local f=$1 sect=$2 key=$3 val=$4
+    [[ -f "$f" ]] || { printf '[%s]\n%s = %s\n' "$sect" "$key" "$val" >"$f"; return; }
+    awk -v sect="$sect" -v key="$key" -v val="$val" '
+        function trim(s){ sub(/^[ \t]+/,"",s); sub(/[ \t]+$/,"",s); return s }
+        function flush(){ for(i=1;i<=nb;i++) print blk[i]; nb=0 }
+        BEGIN { insect=0; done=0; nb=0 }
+        /^[ \t]*$/ { blk[++nb]=$0; next }
+        /^[ \t]*\[.*\][ \t]*$/ {
+            if (insect && !done) { print key " = " val; done=1 }
+            flush()
+            s=$0; sub(/^[ \t]*\[/,"",s); sub(/\][ \t]*$/,"",s)
+            insect=(trim(s)==sect); print; next
+        }
+        { flush() }
+        insect && !done {
+            l=$0; sub(/[#;].*$/,"",l)
+            if (l ~ /=/) { k=l; sub(/=.*$/,"",k); if (trim(k)==key) { print key " = " val; done=1; next } }
+        }
+        { print }
+        END {
+            if (!done && insect)  { print key " = " val; flush() }
+            else if (!done)       { flush(); print "[" sect "]"; print key " = " val }
+            else                  { flush() }
+        }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 }
 
 # ---------------------------------------------------------------------------

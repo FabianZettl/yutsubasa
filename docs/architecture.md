@@ -56,7 +56,7 @@ stateDiagram-v2
 | **gamescope nested inside** | Decouples game resolution from the "monitor", adds fps cap, FSR/integer scaling, HDR, and a clean fullscreen surface. Optional (`use_gamescope`). |
 | **Not `vkms`** | DRM test module: no usable plane/cursor path, can't be a real session output, won't unload while in use. |
 | **Single hardware encode** | Navi 32 has **one** VCN 4.0 unit (dual-VCN is Navi 31 / 7900). No VCN0/VCN1 load-balancing; one HW stream at a time. AV1 encode *is* available. |
-| **No custom quality daemon** | Moonlight ⇄ Sunshine already negotiate codec + adapt bitrate (FEC, dynamic). We only map the client's resolution/fps onto the headless output via `prep-cmd`, plus named profiles. An opt-in bash "nudge" loop (`quality --auto on`) steps profiles down on sustained loss. |
+| **No custom quality daemon** | Moonlight ⇄ Sunshine already negotiate codec + adapt bitrate (FEC, dynamic). We only map the client's resolution/fps onto the headless output via `prep-cmd`, plus one tuned profile and optional per-client supersampling / `render_scale`. |
 | **Separate config tree** `~/.config/gaming-setup/` | Polaris and stock Sunshine both use `~/.config/sunshine/`. Full isolation of conf/apps/creds/state/log avoids clobbering an existing setup. |
 | **Null sink via `pactl` service**, not a `pipewire.conf.d` drop-in | A malformed drop-in stops the whole PipeWire stack from starting. `pactl load-module` in a `Type=oneshot` user unit (`PartOf=pipewire.service`) can't do that. |
 | **Own Sunshine port 47989** | Coexist with (a stopped) Polaris. `status` warns if Polaris is running. |
@@ -76,4 +76,4 @@ stateDiagram-v2
 | `lib/common.sh` | logging, INI reader, JSON state file, defaults |
 | `systemd/user/sunshine-gaming.service` | runs `session-run`; `ExecStop=session-down`; `KillMode=mixed` reaps Steam |
 | `systemd/user/gaming-null-sink.service` | persistent `sink-sunshine` |
-| `systemd/user/gaming-quality-adapter.service` | opt-in auto step-down loop |
+| `systemd/user/yutsubasa-status.service` | status + control web page (:47992) |

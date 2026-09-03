@@ -129,18 +129,56 @@ session_start_sunshine() {
     fi
 }
 
-# session_set_mode W H FPS   - resize the headless output (adaptive resolution).
+# session_set_mode W H FPS [SUPERSAMPLE]
+#   Resize the headless output (adaptive resolution). SUPERSAMPLE > 1 renders the
+#   session above the client's request; render_scale < 1 renders it below.
 session_set_mode() {
-    local w=$1 h=$2 f=$3
+    local w=$1 h=$2 f=$3 ss=${4:-1}
     is_int "$w" && is_int "$h" && is_int "$f" || { warn "bad mode ${w}x${h}@${f}; ignoring"; return 1; }
+    local prof; prof=$(state_get .profile)
     # Clamp to the active profile's ceiling.
     local cap_w cap_h cap_f
-    cap_w=$(quality_field "$(state_get .profile)" max_width  9999)
-    cap_h=$(quality_field "$(state_get .profile)" max_height 9999)
-    cap_f=$(quality_field "$(state_get .profile)" max_fps    999)
+    cap_w=$(quality_field "$prof" max_width  9999)
+    cap_h=$(quality_field "$prof" max_height 9999)
+    cap_f=$(quality_field "$prof" max_fps    999)
     (( w > cap_w )) && w=$cap_w
     (( h > cap_h )) && h=$cap_h
     (( f > cap_f )) && f=$cap_f
+    state_set client_width "$w"; state_set client_height "$h"
+
+    if awk -v s="$ss" 'BEGIN{exit !(s>1)}' 2>/dev/null; then
+        # Per-client supersampling: render the session ABOVE the client's request
+        # and let Sunshine downscale to the requested size for transport (SSAA -
+        # a cleaner, less shimmery picture at the same stream resolution and the
+        # same client decode cost; the extra work is GPU render time here). Wins
+        # over render_scale. Rounded to a multiple of 8, clamped to the ceiling.
+        local sw sh
+        read -r sw sh < <(awk -v w="$w" -v h="$h" -v s="$ss" 'BEGIN{
+            print int(w*s/8+0.5)*8, int(h*s/8+0.5)*8 }')
+        (( sw > cap_w )) && sw=$cap_w
+        (( sh > cap_h )) && sh=$cap_h
+        info "supersample ${ss}x: session ${sw}x${sh}, transported as ${w}x${h}"
+        w=$sw; h=$sh
+    else
+        # Render-scale: drive the headless output below the client's requested
+        # resolution and let the client upscale. Fewer pixels => shorter encode +
+        # decode, and the negotiated bitrate covers a smaller frame. FPS is never
+        # scaled. Rounded to a multiple of 8 (no VAAPI crop rectangle), floored
+        # at 640x360. NB: only helps if Sunshine streams the capture 1:1 on this
+        # path - verify with the client stats overlay.
+        local rs; rs=$(quality_field "$prof" render_scale 1)
+        if [[ "$rs" =~ ^0?\.[0-9]+$ ]] && awk -v s="$rs" 'BEGIN{exit !(s>=0.5 && s<1)}'; then
+            local sw sh
+            read -r sw sh < <(awk -v w="$w" -v h="$h" -v s="$rs" 'BEGIN{
+                nw=int(w*s/8+0.5)*8; nh=int(h*s/8+0.5)*8
+                if(nw<640)nw=640; if(nh<360)nh=360
+                print nw, nh }')
+            info "render_scale $rs: streaming ${sw}x${sh} for a ${w}x${h} client (client upscales)"
+            w=$sw; h=$sh
+        elif [[ "$rs" != 1 && "$rs" != 1.0 && "$rs" != 1.00 ]]; then
+            warn "render_scale '$rs' ignored (expected 0.50-0.99 or 1)"
+        fi
+    fi
     local try
     for try in 1 2 3 4 5; do
         if gsway output HEADLESS-1 mode --custom "${w}x${h}@${f}Hz" >/dev/null 2>&1 \

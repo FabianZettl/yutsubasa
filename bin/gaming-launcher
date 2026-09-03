@@ -22,18 +22,19 @@ source "$LIB/common.sh"
 source "$LIB/session.sh"
 source "$LIB/audio.sh"
 source "$LIB/quality.sh"
+source "$LIB/clients.sh"
 source "$LIB/input.sh"
 source "$LIB/steam.sh"
 source "$LIB/theme.sh"
 
-VERSION="0.10.1"
+VERSION="0.11.0"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
-# option parsing helper: pulls --profile/--res/--fps/--auto out of "$@",
+# option parsing helper: pulls --profile/--res/--fps out of "$@",
 # leaves positionals in GL_POS[]
 # =======================================================================
-OPT_PROFILE=""; OPT_RES=""; OPT_FPS=""; OPT_AUTO=""; OPT_DEBUG=0; OPT_DIRECT=0; OPT_GAMESCOPE=""
+OPT_PROFILE=""; OPT_RES=""; OPT_FPS=""; OPT_DEBUG=0; OPT_DIRECT=0; OPT_GAMESCOPE=""
 declare -a GL_POS=()
 parse_opts() {
     GL_POS=()
@@ -45,8 +46,6 @@ parse_opts() {
             --res=*)      OPT_RES="${1#*=}"; shift;;
             --fps|-f)     OPT_FPS="${2:?--fps needs a number}"; shift 2;;
             --fps=*)      OPT_FPS="${1#*=}"; shift;;
-            --auto)       OPT_AUTO="${2:?--auto on|off}"; shift 2;;
-            --auto=*)     OPT_AUTO="${1#*=}"; shift;;
             --debug)      OPT_DEBUG=1; shift;;
             --direct)     OPT_DIRECT=1; shift;;
             --big-picture) OPT_DIRECT=0; shift;;
@@ -196,61 +195,85 @@ _run_in_session() {
 
 cmd_quality() {
     parse_opts "$@"
-    if [[ -n "$OPT_AUTO" ]]; then
-        case "$OPT_AUTO" in
-            on)  warn "the auto step-down adapter is inert: there is a single tuned profile now"; _adapter disable ;;
-            off) _adapter disable ;;
-            *)   die "--auto on|off" ;;
-        esac
-        return
-    fi
     local p="${GL_POS[0]:-}"
     [[ -z "$p" ]] && { printf 'profiles:\n'; quality_list | sed 's/^/  /'; echo; echo "active: $(state_get .profile)"; return; }
     _apply_res_fps_opts
     quality_apply "$p"
 }
 
-_adapter() {
-    local unit=gaming-quality-adapter.service
-    case "$1" in
-        enable)  systemctl --user start "$unit" 2>/dev/null && ok "auto quality adapter on" \
-                    || { setsid --fork "$LAUNCHER_PATH" _adapter-loop </dev/null >>"$GL_STATE_DIR/quality-adapter.log" 2>&1 & disown; ok "auto quality adapter on (detached)"; } ;;
-        disable) systemctl --user stop "$unit" 2>/dev/null; pkill -f "gaming-launcher _adapter-loop" 2>/dev/null; ok "auto quality adapter off" ;;
+# gaming-launcher scale [0.75|off|status]
+# Stream below the client's requested resolution and let the client upscale.
+# Writes render_scale into the default profile; applied in session_set_mode.
+cmd_scale() {
+    local prof; prof=$(DEFAULT_PROFILE)
+    local cur; cur=$(quality_field "$prof" render_scale 1)
+    local arg="${1:-status}"
+    case "$arg" in
+        status|"")
+            if [[ "$cur" =~ ^0?\.[0-9]+$ ]]; then
+                local ex; ex=$(awk -v s="$cur" 'BEGIN{printf "%dx%d", int(1920*s/8+0.5)*8, int(1080*s/8+0.5)*8}')
+                echo "render scale : $cur  (a 1920x1080 client is streamed $ex; the client upscales)"
+            else
+                echo "render scale : off  (streaming the client's native resolution)"
+            fi
+            return 0 ;;
+        off|none|1|1.0|1.00)
+            _profile_set "$prof" render_scale 1
+            ok "render scale off - streaming the native client resolution" ;;
+        *)
+            [[ "$arg" =~ ^0?\.[0-9]+$ ]] && awk -v s="$arg" 'BEGIN{exit !(s>=0.5 && s<1)}' \
+                || die "scale must be 0.50-0.99 (e.g. 0.75) or 'off'"
+            [[ "$arg" == .* ]] && arg="0$arg"
+            _profile_set "$prof" render_scale "$arg"
+            local ex; ex=$(awk -v s="$arg" 'BEGIN{printf "%dx%d", int(1920*s/8+0.5)*8, int(1080*s/8+0.5)*8}')
+            ok "render scale $arg - a 1920x1080 client now gets a $ex stream" ;;
     esac
+    session_active && info "reconnect the client for it to take effect"
+    true
 }
 
-# background loop: watch sunshine.log for sustained frame loss, step profile
-cmd__adapter_loop() {
-    local poll down up
-    poll=$(gl_cfg adapter poll_seconds 5)
-    down=$(gl_cfg adapter downgrade_after 45)
-    up=$(gl_cfg adapter upgrade_after 15)
-    local bad=0 good=0 logf="$GL_STATE_DIR/sunshine.log"
-    info "quality adapter loop started (poll ${poll}s)"
-    while session_active; do
-        sleep "$poll"
-        [[ -r "$logf" ]] || continue
-        local recent; recent=$(tail -n 200 "$logf" 2>/dev/null)
-        local drops
-        drops=$(printf '%s\n' "$recent" | grep -ciE 'dropped|packet loss|fec.*repair|network.*congest' || true)
-        local cur; cur=$(state_get .profile)
-        if (( drops >= 3 )); then
-            bad=$((bad+poll)); good=0
-            if (( bad >= down )); then
-                local nxt; nxt=$(quality_step_down "$cur")
-                [[ "$nxt" != "$cur" ]] && { warn "sustained loss -> stepping down: $cur -> $nxt"; quality_apply "$nxt" >/dev/null; }
-                bad=0
+# gaming-launcher clients [list | set <name> <factor> [match...] | off <name>]
+# Per-client supersampling. Matched on the requested resolution (Sunshine's
+# prep_cmd has no device name). factor > 1 => the session renders at
+# <requested> x factor and Sunshine downscales to <requested> for transport.
+cmd_clients() {
+    local action="${1:-list}"; shift || true
+    case "$action" in
+        list|"")
+            if [[ ! -s "$GL_CLIENTS" ]] || [[ -z "$(conf_sections "$GL_CLIENTS")" ]]; then
+                echo "no clients configured - $GL_CLIENTS"
+                echo "add one:  gaming-launcher clients set \"Steam Deck\" 1.5 1280x720"
+                return 0
             fi
-        else
-            good=$((good+poll)); bad=0
-            if (( good >= up*4 )); then
-                local nxt; nxt=$(quality_step_up "$cur")
-                [[ "$nxt" != "$cur" ]] && { info "network healthy -> stepping up: $cur -> $nxt"; quality_apply "$nxt" >/dev/null; }
-                good=0
+            printf '  %-22s %-7s %-8s %s\n' NAME FACTOR ENABLED MATCH
+            local s
+            while IFS= read -r s; do
+                printf '  %-22s %-7s %-8s %s\n' "$s" \
+                    "$(conf_get "$GL_CLIENTS" "$s" factor 1)" \
+                    "$(conf_get "$GL_CLIENTS" "$s" enabled true)" \
+                    "$(conf_get "$GL_CLIENTS" "$s" match '-')"
+            done < <(conf_sections "$GL_CLIENTS")
+            ;;
+        set)
+            local name="${1:-}" fac="${2:-}"; shift 2 2>/dev/null || true
+            [[ -n "$name" && "$fac" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+                || die "usage: clients set <name> <factor> [match ...]   (factor 1 = off)"
+            client_set "$name" factor "$fac"
+            client_set "$name" enabled true
+            if [[ -n "${*:-}" ]]; then
+                client_set "$name" match "$(printf '%s' "$*" | sed 's/[[:space:]]\+/, /g')"
+            elif [[ -z "$(conf_get "$GL_CLIENTS" "$name" match '')" ]]; then
+                warn "no 'match' set for '$name' - it will never trigger. e.g. clients set \"$name\" $fac 1280x720"
             fi
-        fi
-    done
-    info "quality adapter loop stopped (session gone)"
+            ok "client '$name' -> supersample ${fac}x  (match: $(conf_get "$GL_CLIENTS" "$name" match '-'))"
+            ;;
+        off|disable)
+            [[ -n "${1:-}" ]] || die "usage: clients off <name>"
+            client_set "$1" enabled false
+            ok "client '$1' supersampling off"
+            ;;
+        *) die "clients [list | set <name> <factor> [match...] | off <name>]" ;;
+    esac
 }
 
 # ---- second screen ----------------------------------------------------
@@ -575,7 +598,6 @@ cmd_stop() {
     fi
     # deliberate stop: don't let session_down auto-resume the second screen
     state_unset scr_suspended 2>/dev/null || true
-    _adapter disable >/dev/null 2>&1 || true
     if session_active || [[ -S "$GL_SWAY_SOCK" ]]; then
         if systemctl --user is-active --quiet sunshine-gaming.service 2>/dev/null; then
             systemctl --user stop sunshine-gaming.service
@@ -600,6 +622,16 @@ cmd_status() {
         printf '  Session     : \e[32mup\e[0m  (sway pid %s, WAYLAND_DISPLAY=%s)\n' "$sp" "$wl"
         printf '  Profile     : %s\n' "$(state_get .profile)"
         printf '  Output      : HEADLESS-1 @ %sx%s@%s\n' "$(state_get .width)" "$(state_get .height)" "$(state_get .fps)"
+        local cw ch sw sh; cw=$(state_get .client_width); ch=$(state_get .client_height)
+        sw=$(state_get .width); sh=$(state_get .height)
+        if [[ "$cw" =~ ^[0-9]+$ && "$sw" =~ ^[0-9]+$ && "$cw" != "$sw" ]]; then
+            if (( sw > cw )); then
+                printf '  \e[36mSupersample \e[0m: session %sx%s, transported %sx%s (SSAA)\n' "$sw" "$sh" "$cw" "$ch"
+            else
+                printf '  \e[36mStream scale\e[0m: %sx%s streamed, client asked %sx%s (render_scale %s)\n' \
+                    "$sw" "$sh" "$cw" "$ch" "$(quality_field "$(state_get .profile)" render_scale 1)"
+            fi
+        fi
         local om; om=$(gsway -t get_outputs 2>/dev/null | jq -r '.[]|select(.name=="HEADLESS-1")|"\(.current_mode.width)x\(.current_mode.height)@\(.current_mode.refresh/1000|floor)"' 2>/dev/null)
         [[ -n "$om" ]] && printf '  Sway reports : %s\n' "$om"
     else
@@ -840,6 +872,9 @@ COMMANDS
                        start the isolated session (and optionally launch a game)
   steam                start the session for Steam Big Picture streaming
   quality [PROFILE]    show / switch quality profile (gaming | custom)
+  scale [0.75|off]     stream below the client resolution; the client upscales
+  clients [set …|off]  per-client supersampling (render high, transport at the
+                       client's resolution) - also on the status web page
   secondscreen on|off  start/stop the 2nd Sunshine (port 48020). Pick the mode
                        in Moonlight/Artemis by app: "Zweitmonitor" (extra headless
                        monitor, muted) · "Hauptmonitor spiegeln" (primary as-is,
@@ -912,8 +947,11 @@ cmd_session_down() { session_down; }
 cmd_session_prep() {
     local w="${SUNSHINE_CLIENT_WIDTH:-}" h="${SUNSHINE_CLIENT_HEIGHT:-}" f="${SUNSHINE_CLIENT_FPS:-}"
     info "client connected: ${w:-?}x${h:-?}@${f:-?}"
-    [[ -n "$w$h$f" ]] && is_int "${w:-x}" && is_int "${h:-x}" && is_int "${f:-x}" \
-        && session_set_mode "$w" "$h" "$f"
+    if [[ -n "$w$h$f" ]] && is_int "${w:-x}" && is_int "${h:-x}" && is_int "${f:-x}"; then
+        local ssf; ssf=$(client_supersample "$w" "$h" "$f")
+        [[ "$ssf" != 1 ]] && info "client ${w}x${h}@${f} matched a supersample rule (${ssf}x)"
+        session_set_mode "$w" "$h" "$f" "$ssf"
+    fi
     audio_ensure_sink || true
     local prof; prof=$(state_get .profile); [[ -z "$prof" || "$prof" == null ]] && prof=$(DEFAULT_PROFILE)
 
@@ -928,7 +966,6 @@ cmd_session_prep() {
     if [[ "$(quality_field "$prof" input_isolation true)" == true ]]; then
         input_isolate || true      # desktop ignores passthrough devs + bridge -> session
     fi
-    [[ "$(gl_cfg adapter enabled false)" == true ]] && _adapter enable || true
     true
 }
 
@@ -939,7 +976,6 @@ cmd_session_postp() {
     audio_restore_default || true
     input_release || true
     _secondscreen_resume || true
-    _adapter disable >/dev/null 2>&1 || true
     state_unset active_app
     true
 }
@@ -952,6 +988,8 @@ main() {
         steam)              cmd_steam "$@" ;;
         run)                cmd_run "$@" ;;
         quality)            cmd_quality "$@" ;;
+        scale)              cmd_scale "$@" ;;
+        clients)            cmd_clients "$@" ;;
         secondscreen|screen) cmd_secondscreen "$@" ;;
         secondscreen-run)   cmd_secondscreen run "$@" ;;
         secondscreen-app)   cmd_secondscreen_app "${1:-extra}" ;;
@@ -971,7 +1009,6 @@ main() {
         session-down)       cmd_session_down "$@" ;;
         session-prep)       cmd_session_prep "$@" ;;
         session-postp)      cmd_session_postp "$@" ;;
-        _adapter-loop)      cmd__adapter_loop "$@" ;;
         _audio-reconcile)   audio_reconcile ;;
         install-completions) cmd_install_completions "$@" ;;
         version|--version|-V) echo "gaming-launcher $VERSION" ;;
