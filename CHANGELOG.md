@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.1 (2026-09-03)
+
+- **theme: fix the navbar and wordmark.**
+  - Sunshine's dark theme keeps a separate `--navbar-bg` / `--navbar-text`
+    (a gold bar) - the override now sets those too, so the navbar is dark.
+  - the brand element is just an `<img>`; the "yutsubasa" wordmark is now a
+    static inline pseudo-element (it was absolutely positioned and overlapped
+    the nav links).
+  - also swaps the browser-tab `<title>` in the `*.html` pages.
+  - `theme apply --quiet` (the pacman-hook path) no longer errors on the flag;
+    `theme revert` restores every `*.yts-orig` under the web dir.
+
 ## 0.8.0 (2026-09-03)
 
 - **`gaming-launcher theme apply|revert|status`** — reskins the Sunshine web UI

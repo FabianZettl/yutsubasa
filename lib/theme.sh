@@ -62,16 +62,24 @@ theme_apply() {
         (( quiet )) || info "no SVG rasteriser (rsvg-convert / magick) - keeping the stock logo"
     fi
 
+    # 3. browser tab title (each *.html hardcodes <title>Sunshine</title>)
+    local h t
+    for h in "$SUN_WEB"/*.html; do
+        [[ -f "$h" ]] && grep -q '<title>Sunshine</title>' "$h" || continue
+        [[ -f "$h.yts-orig" ]] || _th cp "$h" "$h.yts-orig"
+        t=$(mktemp); sed 's|<title>Sunshine</title>|<title>yutsubasa</title>|' "$h" >"$t"
+        _th cp "$t" "$h"; rm -f "$t"
+    done
+
     (( quiet )) || ok "yutsubasa theme applied - hard-reload the Sunshine web UI (Ctrl+Shift+R)"
     (( quiet )) || info "revert: gaming-launcher theme revert"
 }
 
 theme_revert() {
     local f n=0
-    for f in "$SUN_CSS" "$SUN_LOGO16" "$SUN_LOGO45"; do
-        [[ -f "$f.yts-orig" ]] || continue
-        _th mv "$f.yts-orig" "$f" && n=$((n + 1))
-    done
+    while IFS= read -r f; do
+        _th mv "$f" "${f%.yts-orig}" && n=$((n + 1))
+    done < <(find "$SUN_WEB" -name '*.yts-orig' 2>/dev/null)
     (( n )) && ok "reverted $n file(s) to stock Sunshine (hard-reload the web UI)" \
             || info "nothing to revert (no .yts-orig backups under $SUN_WEB)"
 }
