@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.3 (2026-09-03)
+
+- **Docs: gamescope is opt-in, not required.** `Failed to get backend DRM FD`
+  on headless wlroots looks fatal but isn't - the game falls back and renders.
+  FF7 Rebirth plays fine **bare** at 60 fps once warm; the earlier black screen
+  was Proton prefix setup + shader precompile on the first run. `--gamescope`
+  stays available for the FPS cap / FSR / any title that genuinely stays broken.
+
 ## 0.9.2 (2026-09-03)
 
 - **gamescope wrapper now actually renders heavy Proton titles.** Verified: FF7

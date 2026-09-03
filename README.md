@@ -278,13 +278,14 @@ default-sink hijack is reverted continuously while a client is connected.
 
 ## Known limitations
 
-- **Heavy native-Vulkan / DX12-via-Proton titles need the gamescope wrapper.**
-  Headless wlroots has no DRM backend, so `zwp_linux_dmabuf_v1` can't hand GPU
-  clients a device (`Failed to get backend DRM FD` in `session.log`) — bare, a
-  title like *FF7 Rebirth* (vkd3d-proton) can come up black. Emulators, Steam Big
-  Picture and lighter / OpenGL games are fine bare. Add such a game with
-  `--gamescope` (see below): gamescope gives it its own WSI swapchain. Verified
-  working nested on wlroots 0.20 + gles2.
+- **A game's *first* launch can stay black for a while.** Headless wlroots logs
+  `Failed to get backend DRM FD` (`zwp_linux_dmabuf_v1` has no device to hand
+  out) — it looks fatal but isn't; the game falls back and renders. What's
+  actually black on a first run is Proton prefix setup + shader precompile (10-20
+  min for a big UE5 title). *FF7 Rebirth* (vkd3d-proton) then plays fine **bare**
+  at 60 fps. If a title genuinely stays broken, add it with `--gamescope` (see
+  above) — gamescope gives the game a working Vulkan device. Verified nested on
+  wlroots 0.20 + gles2.
 - **Hyprland Lua config is assumed.** On a `.conf` (hyprlang) setup the
   `hl.monitor` / `hl.device` managed blocks and the `hyprctl reload` mechanism
   don't apply.
