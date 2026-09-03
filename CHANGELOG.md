@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0 (2026-09-03)
+
+- **Status page** (`bin/gl-status-serve`, `yutsubasa-status.service`,
+  `http://localhost:47992`). stdlib-Python HTTP server, yutsubasa-themed:
+  - live `gaming-launcher status` + `troubleshoot`, auto-refresh;
+  - **Steam-library panel** — lists every installed game, an **Add** button per
+    game runs `gaming-launcher add-game` (`--direct` / `--gamescope` toggles),
+    plus a "reload apps.json" button. Same job as `steam-sync/`, no desktop app.
+  - `[status]` config: `port`, `bind` (`loopback` default / `lan` — `lan`
+    requires a `token`, embedded in the page), `token`.
+
 ## 0.9.3 (2026-09-03)
 
 - **Docs: gamescope is opt-in, not required.** `Failed to get backend DRM FD`

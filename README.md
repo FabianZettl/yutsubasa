@@ -302,6 +302,24 @@ default-sink hijack is reverted continuously while a client is connected.
 
 ---
 
+## Status page
+
+`yutsubasa-status.service` serves a small web page (`gl-status-serve`):
+
+```
+http://localhost:47992
+```
+
+Live `gaming-launcher status` + `troubleshoot` output, plus a **Steam-library
+panel** — every installed game with an **Add** button that runs
+`gaming-launcher add-game` (with `--direct` / `--gamescope` toggles) and a
+"reload apps.json" button. Covers the same ground as `steam-sync/` without a
+desktop app.
+
+`gaming-setup.conf` `[status]`: `port` (47992), `bind` — `loopback` (host only,
+default) or `lan` (reachable from the LAN, then `token` is **required** and any
+browser that loads the page can add games), `token`.
+
 ## Web UI theme
 
 The Sunshine web UI can be reskinned in the yutsubasa style (a dark teal/amber

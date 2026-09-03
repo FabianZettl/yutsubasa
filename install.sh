@@ -40,12 +40,13 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # ---------------------------------------------------------------------------
 if (( UNINSTALL )); then
     say "uninstalling"
-    run systemctl --user disable --now sunshine-gaming.service sunshine-screen.service gaming-quality-adapter.service gaming-null-sink.service 2>/dev/null || true
-    run rm -f "$UNIT_DIR/sunshine-gaming.service" "$UNIT_DIR/sunshine-screen.service" "$UNIT_DIR/gaming-quality-adapter.service" "$UNIT_DIR/gaming-null-sink.service"
+    run systemctl --user disable --now sunshine-gaming.service sunshine-screen.service gaming-quality-adapter.service gaming-null-sink.service yutsubasa-status.service 2>/dev/null || true
+    run rm -f "$UNIT_DIR/sunshine-gaming.service" "$UNIT_DIR/sunshine-screen.service" "$UNIT_DIR/gaming-quality-adapter.service" "$UNIT_DIR/gaming-null-sink.service" "$UNIT_DIR/yutsubasa-status.service"
     run systemctl --user daemon-reload 2>/dev/null || true
     [[ -L /usr/local/bin/gaming-launcher ]] && sudo_run rm -f /usr/local/bin/gaming-launcher
     [[ -L "$HOME/.local/bin/gaming-launcher" ]] && rm -f "$HOME/.local/bin/gaming-launcher"
     for p in /usr/local/bin/gl-steam-hold "$HOME/.local/bin/gl-steam-hold" \
+             /usr/local/bin/gl-status-serve "$HOME/.local/bin/gl-status-serve" \
              /usr/local/bin/sunshine-input-bridge "$HOME/.local/bin/sunshine-input-bridge"; do
         [[ -e "$p" ]] && { [[ -w "$(dirname "$p")" ]] && run rm -f "$p" || sudo_run rm -f "$p"; }
     done
@@ -277,14 +278,16 @@ else
     render "$REPO/config/sunshine/sunshine.conf.in" "$SUN/sunshine.conf"
     render "$REPO/config/sunshine/apps.json.in" "$SUN/apps.json"
 fi
-# gl-steam-hold next to the launcher (used by the gamescope wrapper for Steam games)
-run chmod +x "$REPO/bin/gl-steam-hold"
+# helper scripts next to the launcher
+run chmod +x "$REPO/bin/gl-steam-hold" "$REPO/bin/gl-status-serve"
 if (( ! CHECK )); then
-    HOLD_LINK="$(dirname "$BIN_LINK")/gl-steam-hold"
-    ln -sfn "$REPO/bin/gl-steam-hold" "$HOLD_LINK" 2>/dev/null \
-      || sudo -n ln -sfn "$REPO/bin/gl-steam-hold" "$HOLD_LINK" 2>/dev/null \
-      || sudo ln -sfn "$REPO/bin/gl-steam-hold" "$HOLD_LINK" 2>/dev/null \
-      || warn "could not link gl-steam-hold -> $HOLD_LINK (the launcher falls back to $REPO/bin)"
+    for h in gl-steam-hold gl-status-serve; do
+        L="$(dirname "$BIN_LINK")/$h"
+        ln -sfn "$REPO/bin/$h" "$L" 2>/dev/null \
+          || sudo -n ln -sfn "$REPO/bin/$h" "$L" 2>/dev/null \
+          || sudo ln -sfn "$REPO/bin/$h" "$L" 2>/dev/null \
+          || warn "could not link $h -> $L"
+    done
 fi
 
 # ---------------------------------------------------------------------------
@@ -330,12 +333,20 @@ fi
 
 # ---------------------------------------------------------------------------
 say "6/8  systemd user units"
-for u in sunshine-gaming.service sunshine-screen.service gaming-quality-adapter.service gaming-null-sink.service; do
+for u in sunshine-gaming.service sunshine-screen.service gaming-quality-adapter.service gaming-null-sink.service yutsubasa-status.service; do
     if (( CHECK )); then printf '  %s(would)%s install unit %s\n' "$c_d" "$c_0" "$u"; continue; fi
-    sed "s|/usr/local/bin/gaming-launcher|$BIN_LINK|g" "$REPO/systemd/user/$u" >"$UNIT_DIR/$u"
+    sed -e "s|/usr/local/bin/gaming-launcher|$BIN_LINK|g" \
+        -e "s|/usr/local/bin/gl-status-serve|$(dirname "$BIN_LINK")/gl-status-serve|g" \
+        "$REPO/systemd/user/$u" >"$UNIT_DIR/$u"
 done
 run systemctl --user daemon-reload
 good "user units installed"
+
+if (( ! CHECK )) && ask "enable the status page on login (http://localhost:47992)?"; then
+    systemctl --user enable --now yutsubasa-status.service 2>/dev/null \
+        && good "status page at http://localhost:47992  (set [status] bind=lan + token for LAN access)" \
+        || warn "could not start yutsubasa-status.service"
+fi
 
 # Persistent null sink (created via pactl, never touches pipewire's own config).
 if (( CHECK )); then

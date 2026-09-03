@@ -1,0 +1,13 @@
+[Unit]
+Description=yutsubasa status + Steam-library page (gl-status-serve)
+After=default.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/gl-status-serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

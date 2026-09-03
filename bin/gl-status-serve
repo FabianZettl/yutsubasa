@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""yutsubasa status + Steam-library control page.
+
+A tiny stdlib HTTP server:
+  GET  /                 themed status page (auto-refresh)
+  GET  /api/status       plain `gaming-launcher status` + `troubleshoot`
+  GET  /api/games        installed Steam games + which are already added
+  POST /api/add-game     {appid,name,direct,gamescope}  -> gaming-launcher add-game
+  POST /api/reload       restart sunshine-gaming so it reloads apps.json
+
+Config: ~/.config/gaming-setup/gaming-setup.conf  [status]
+  port  = 47992
+  bind  = loopback | lan       (lan requires a token)
+  token =                      (embedded in the page; required for lan)
+"""
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HOME = os.path.expanduser("~")
+CONF = os.path.join(HOME, ".config/gaming-setup/gaming-setup.conf")
+APPS = os.path.join(HOME, ".config/gaming-setup/sunshine/apps.json")
+LAUNCHER = (
+    "/usr/local/bin/gaming-launcher"
+    if os.path.exists("/usr/local/bin/gaming-launcher")
+    else os.path.join(HOME, ".local/bin/gaming-launcher")
+)
+STEAM_ROOTS = ["~/.local/share/Steam", "~/.steam/steam",
+               "~/.var/app/com.valvesoftware.Steam/.steam/steam"]
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def conf(key, default=""):
+    try:
+        with open(CONF) as f:
+            sect = None
+            for line in f:
+                line = line.split("#", 1)[0].split(";", 1)[0].strip()
+                m = re.match(r"\[(.+)\]$", line)
+                if m:
+                    sect = m.group(1); continue
+                if sect == "status" and "=" in line:
+                    k, v = (x.strip() for x in line.split("=", 1))
+                    if k == key:
+                        return v
+    except OSError:
+        pass
+    return default
+
+
+def sh(*args, timeout=30):
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return (r.stdout or "") + (r.stderr or "")
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"(command failed: {e})"
+
+
+def steam_root():
+    for r in STEAM_ROOTS:
+        r = os.path.expanduser(r)
+        if os.path.isdir(r):
+            return r
+    return None
+
+
+def library_paths(root):
+    vdf = os.path.join(root, "steamapps", "libraryfolders.vdf")
+    paths = []
+    try:
+        txt = open(vdf, encoding="utf-8", errors="ignore").read()
+        paths = re.findall(r'"path"\s+"([^"]+)"', txt)
+    except OSError:
+        pass
+    return paths or [root]
+
+
+def added_appids():
+    try:
+        data = json.load(open(APPS))
+        cmds = " ".join(a.get("cmd", "") for a in data.get("apps", []))
+        return set(re.findall(r"(?:steam:|rungameid/)(\d+)", cmds))
+    except (OSError, ValueError):
+        return set()
+
+
+def steam_games():
+    root = steam_root()
+    if not root:
+        return []
+    added = added_appids()
+    seen, out = set(), []
+    for lib in library_paths(root):
+        d = os.path.join(lib, "steamapps")
+        try:
+            files = os.listdir(d)
+        except OSError:
+            continue
+        for fn in files:
+            if not fn.startswith("appmanifest_") or not fn.endswith(".acf"):
+                continue
+            try:
+                t = open(os.path.join(d, fn), encoding="utf-8", errors="ignore").read()
+            except OSError:
+                continue
+            am = re.search(r'"appid"\s+"(\d+)"', t)
+            nm = re.search(r'"name"\s+"([^"]*)"', t)
+            if not am:
+                continue
+            appid = am.group(1)
+            if appid in seen:
+                continue
+            seen.add(appid)
+            name = nm.group(1) if nm else appid
+            low = name.lower()
+            if low.startswith(("proton", "steam linux runtime", "steamworks common",
+                               "steamvr", "steam controller")):
+                continue
+            out.append({"appid": appid, "name": name, "added": appid in added})
+    out.sort(key=lambda g: g["name"].lower())
+    return out
+
+
+def status_text():
+    return ANSI.sub("", sh(LAUNCHER, "status") + "\n" + sh(LAUNCHER, "troubleshoot"))
+
+
+PAGE = """<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>yutsubasa</title>
+<style>
+:root{{--bg:#0f1420;--surf:#172033;--bd:#283650;--tx:#e9edf6;--mut:#9fabc2;
+--te:#35d0c4;--am:#f5a524}}
+*{{box-sizing:border-box}}
+body{{margin:0;font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--tx);
+padding:1.2rem;max-width:900px;margin:auto}}
+h1{{font-size:1.2rem;margin:0 0 .2rem}}h1 b{{color:var(--te)}}
+h2{{font-size:.95rem;color:var(--mut);margin:1.4rem 0 .5rem;text-transform:uppercase;
+letter-spacing:.06em}}
+.muted{{color:var(--mut);font-size:.85rem}}
+pre{{background:var(--surf);border:1px solid var(--bd);border-radius:.6rem;padding:1rem;
+overflow:auto;white-space:pre-wrap}}
+.game{{display:flex;align-items:center;gap:.6rem;background:var(--surf);border:1px solid var(--bd);
+border-radius:.5rem;padding:.5rem .7rem;margin:.3rem 0}}
+.game .n{{flex:1}}.game .id{{color:var(--mut);font-size:.8rem}}
+button{{background:var(--te);color:#04211f;border:0;border-radius:.4rem;padding:.35rem .8rem;
+font-weight:600;cursor:pointer}}
+button.sec{{background:transparent;color:var(--mut);border:1px solid var(--bd)}}
+button:disabled{{opacity:.45;cursor:default}}
+label{{font-size:.8rem;color:var(--mut);margin-right:.4rem}}
+.bar{{display:flex;gap:.5rem;align-items:center;margin:.6rem 0}}
+</style></head><body>
+<h1><b>yutsubasa</b> &nbsp;status</h1>
+<p class=muted>auto-refresh 8s &middot; <span id=t></span></p>
+<pre id=st>loading…</pre>
+<h2>Steam library</h2>
+<div class=bar>
+  <label><input type=checkbox id=direct checked> --direct</label>
+  <label><input type=checkbox id=gs> --gamescope</label>
+  <button class=sec id=reload>reload apps.json (restart :47989)</button>
+</div>
+<div id=games class=muted>loading…</div>
+<script>
+const TOKEN={token!r};
+const q=(s)=>({{t:TOKEN}});
+async function load(){{
+ try{{
+  document.getElementById('st').textContent=await (await fetch('api/status')).text();
+  const gs=await (await fetch('api/games')).json();
+  document.getElementById('games').innerHTML = gs.length? gs.map(g=>
+   `<div class=game><span class=n>${{g.name}}</span>`+
+   `<span class=id>${{g.appid}}</span>`+
+   (g.added?`<button disabled>added</button>`:
+    `<button data-id="${{g.appid}}" data-n="${{g.name.replace(/"/g,'&quot;')}}">add</button>`)+
+   `</div>`).join('') : 'no Steam library found';
+  document.getElementById('t').textContent=new Date().toLocaleTimeString();
+ }}catch(e){{document.getElementById('st').textContent='server unreachable';}}
+}}
+document.getElementById('games').addEventListener('click',async e=>{{
+ const b=e.target.closest('button[data-id]'); if(!b) return;
+ b.disabled=true; b.textContent='…';
+ const r=await fetch('api/add-game',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+  body:JSON.stringify({{token:TOKEN,appid:b.dataset.id,name:b.dataset.n,
+   direct:document.getElementById('direct').checked,
+   gamescope:document.getElementById('gs').checked}})}});
+ b.textContent = r.ok? 'added' : 'error'; setTimeout(load,600);
+}});
+document.getElementById('reload').addEventListener('click',async e=>{{
+ e.target.textContent='restarting…';
+ await fetch('api/reload',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+  body:JSON.stringify({{token:TOKEN}})}});
+ setTimeout(()=>{{e.target.textContent='reload apps.json (restart :47989)';load();}},4000);
+}});
+load(); setInterval(load,8000);
+</script></body></html>"""
+
+
+class H(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def _send(self, code, body, ctype="text/plain; charset=utf-8"):
+        b = body.encode() if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _auth(self, payload):
+        tok = conf("token", "")
+        if conf("bind", "loopback") != "lan":
+            return True
+        return bool(tok) and payload.get("token") == tok
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            self._send(200, PAGE.format(token=conf("token", "")), "text/html; charset=utf-8")
+        elif self.path == "/api/status":
+            self._send(200, status_text())
+        elif self.path == "/api/games":
+            self._send(200, json.dumps(steam_games()), "application/json")
+        else:
+            self._send(404, "not found")
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            payload = json.loads(self.rfile.read(n) or b"{}")
+        except ValueError:
+            payload = {}
+        if not self._auth(payload):
+            self._send(403, "forbidden (bad token)"); return
+        if self.path == "/api/add-game":
+            appid = str(payload.get("appid", "")).strip()
+            name = str(payload.get("name", "")).strip() or appid
+            if not appid.isdigit():
+                self._send(400, "bad appid"); return
+            args = [LAUNCHER, "add-game", name, f"steam:{appid}"]
+            if payload.get("direct"):
+                args.append("--direct")
+            if payload.get("gamescope"):
+                args.append("--gamescope")
+            self._send(200, sh(*args, timeout=90))
+        elif self.path == "/api/reload":
+            self._send(200, sh("systemctl", "--user", "restart",
+                               "sunshine-gaming.service", timeout=60))
+        else:
+            self._send(404, "not found")
+
+    def log_message(self, *a):
+        pass
+
+
+def main():
+    port = int(conf("port", "47992") or 47992)
+    bind = conf("bind", "loopback")
+    host = "0.0.0.0" if bind == "lan" else "127.0.0.1"
+    if bind == "lan" and not conf("token", ""):
+        sys.stderr.write("[status] bind=lan needs a [status] token - refusing to start\n")
+        sys.exit(1)
+    srv = ThreadingHTTPServer((host, port), H)
+    sys.stderr.write(f"yutsubasa status on http://{host}:{port}/  (bind={bind})\n")
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

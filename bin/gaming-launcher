@@ -26,7 +26,7 @@ source "$LIB/input.sh"
 source "$LIB/steam.sh"
 source "$LIB/theme.sh"
 
-VERSION="0.9.3"
+VERSION="0.10.0"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -844,6 +844,7 @@ COMMANDS
                        monitor, muted) · "Hauptmonitor spiegeln" (primary as-is,
                        audio passthrough) · "Remote Work" (headless + primary OFF)
   status               show session / encoder / client state
+                       (also a live web page: http://localhost:47992 — yutsubasa-status.service)
   stop                 tear the session down, restore desktop audio + input
   list-games           list installed Steam games
   add-game NAME TARGET add a Sunshine app entry (TARGET = cmd | steam:APPID)
