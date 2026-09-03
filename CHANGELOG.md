@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.2 (2026-09-03)
+
+- **gamescope wrapper now actually renders heavy Proton titles.** Verified: FF7
+  Rebirth at 60 fps through `--gamescope`.
+  - `ENABLE_GAMESCOPE_WSI=0` for the wrapped launch — Proton games render via
+    XWayland, which the gamescope WSI layer can't hook; without this it pops a
+    modal "Creating swapchain for non-Gamescope swapchain - hooking has failed"
+    dialog that blocks the game. (The earlier `VK_LOADER_LAYERS_*` isolation was
+    a red herring - dropped.)
+  - `cmd_run` shuts down a stale in-session Steam client before wrapping, so the
+    gamescope env reaches the game (it only propagates through a client that
+    `gl-steam-hold` starts itself).
+
 ## 0.9.1 (2026-09-03)
 
 - **gamescope + Steam games:** `steam steam://rungameid/N` is fire-and-forget, so

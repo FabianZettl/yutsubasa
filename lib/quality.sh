@@ -137,14 +137,15 @@ quality_gamescope_args() {
         # would tear down with it, orphaning the game (black screen). The caller
         # wraps the target in gl-steam-hold, which outlives the game.
         #
-        # Vulkan-layer isolation: other implicit layers (MESA_anti_lag,
-        # steam_overlay, MAKO, fossilize) sit ahead of gamescope's WSI layer and
-        # break its swapchain hook ("Creating swapchain for non-Gamescope
-        # swapchain. Hooking has failed."). Disable all implicit layers, keep
-        # only gamescope-wsi. NOTE: this only reaches the game when gl-steam-hold
-        # starts a fresh Steam client; if a client is already up in the session
-        # the game inherits ITS env instead.
-        steam_pre="env DISABLE_VK_LAYER_VALVE_steam_overlay_1=1 VK_LOADER_LAYERS_DISABLE=~implicit~ VK_LOADER_LAYERS_ENABLE=VK_LAYER_FROG_gamescope_wsi_x86_64,VK_LAYER_FROG_gamescope_wsi_i386 "
+        # ENABLE_GAMESCOPE_WSI=0: Proton games render through XWayland; the
+        # gamescope WSI layer can't hook X11 surfaces and pops a modal
+        # "Creating swapchain for non-Gamescope swapchain - hooking has failed"
+        # dialog that blocks the game. Off -> no dialog, gamescope composites the
+        # X11 window normally and still hands the game a working Vulkan device
+        # (verified: FF7 Rebirth renders at 60fps).
+        # These reach the game only when gl-steam-hold starts a FRESH Steam
+        # client - cmd_run shuts down a stale session client first.
+        steam_pre="env ENABLE_GAMESCOPE_WSI=0 DISABLE_VK_LAYER_VALVE_steam_overlay_1=1 "
     fi
 
     # FSR: render internally at render_scale x client res, upscale to client res

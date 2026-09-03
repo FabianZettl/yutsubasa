@@ -205,14 +205,21 @@ Add `--gamescope` to wrap a game in gamescope inside the session:
 gaming-launcher add-game "FF7 Rebirth" steam:2909400 --direct --gamescope
 ```
 
-gamescope gets `-W -H -r` from the connecting client and gives the game a real
-Vulkan **WSI swapchain** (fixes the headless-wlroots black screen for heavy
-Vulkan / DX12-via-Proton titles), an **FPS cap** at the client's rate, optional
-**FSR** upscaling and lower-latency present. It renders into the nested Sway as a
-normal client — the capture path is unchanged. Tune in `gaming-setup.conf`
-`[gamescope]` (`render_scale` for FSR, `grab_cursor`, `rt`, `extra`). Global
-default: `[general] use_gamescope`; override per run with `--gamescope` /
-`--no-gamescope`. Leave it off for emulators / Big Picture / OpenGL games.
+gamescope gets `-W -H -r` from the connecting client and gives the game a working
+Vulkan device (**fixes the headless-wlroots black screen** for heavy Vulkan /
+DX12-via-Proton titles — verified: FF7 Rebirth renders at 60 fps), an **FPS cap**
+at the client's rate, optional **FSR** upscaling and lower-latency present. It
+renders into the nested Sway as a normal client — the capture path is unchanged.
+Tune in `gaming-setup.conf` `[gamescope]` (`render_scale` for FSR, `grab_cursor`,
+`rt`, `extra`). Global default: `[general] use_gamescope`; per run with
+`--gamescope` / `--no-gamescope`. Leave it **off** for emulators / Big Picture /
+OpenGL games.
+
+For a Steam game the launcher: (1) shuts down a stale in-session Steam client so
+the gamescope env reaches the game; (2) runs `gl-steam-hold` as gamescope's child
+(so a fire-and-forget `steam://rungameid/…` doesn't tear gamescope down); (3)
+sets `ENABLE_GAMESCOPE_WSI=0` — Proton renders via XWayland, which the gamescope
+WSI layer can't hook, and it pops a modal "hooking failed" dialog otherwise.
 
 Or the GUI — [`steam-sync/`](steam-sync/):
 
