@@ -19,6 +19,6 @@ _gaming_launcher() {
         theme)        COMPREPLY=( $(compgen -W "apply revert status" -- "$cur") ); return;;
         logs)         COMPREPLY=( $(compgen -W "analyze" -- "$cur") ); return;;
     esac
-    COMPREPLY=( $(compgen -W "--profile --res --fps --auto --debug" -- "$cur") )
+    COMPREPLY=( $(compgen -W "--profile --res --fps --auto --debug --gamescope --no-gamescope" -- "$cur") )
 }
 complete -F _gaming_launcher gaming-launcher

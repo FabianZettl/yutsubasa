@@ -26,14 +26,14 @@ source "$LIB/input.sh"
 source "$LIB/steam.sh"
 source "$LIB/theme.sh"
 
-VERSION="0.8.1"
+VERSION="0.9.0"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
 # option parsing helper: pulls --profile/--res/--fps/--auto out of "$@",
 # leaves positionals in GL_POS[]
 # =======================================================================
-OPT_PROFILE=""; OPT_RES=""; OPT_FPS=""; OPT_AUTO=""; OPT_DEBUG=0; OPT_DIRECT=0
+OPT_PROFILE=""; OPT_RES=""; OPT_FPS=""; OPT_AUTO=""; OPT_DEBUG=0; OPT_DIRECT=0; OPT_GAMESCOPE=""
 declare -a GL_POS=()
 parse_opts() {
     GL_POS=()
@@ -50,6 +50,8 @@ parse_opts() {
             --debug)      OPT_DEBUG=1; shift;;
             --direct)     OPT_DIRECT=1; shift;;
             --big-picture) OPT_DIRECT=0; shift;;
+            --gamescope)   OPT_GAMESCOPE=1; shift;;
+            --no-gamescope) OPT_GAMESCOPE=0; shift;;
             --)           shift; while (($#)); do GL_POS+=("$1"); shift; done;;
             -*)           die "unknown option: $1";;
             *)            GL_POS+=("$1"); shift;;
@@ -683,12 +685,14 @@ cmd_add_game() {
     local target="${GL_POS[1]:?usage: add-game <name> <cmd|steam:APPID>}"
     need jq
     local cmd d=""
-    (( OPT_DIRECT )) && d=" --direct"
+    (( OPT_DIRECT )) && d+=" --direct"
+    [[ "$OPT_GAMESCOPE" == 1 ]] && d+=" --gamescope"
+    [[ "$OPT_GAMESCOPE" == 0 ]] && d+=" --no-gamescope"
     # no --profile: there is one tuned profile; `run` picks it up from state/config.
     if [[ "$target" == steam:* || "$target" =~ ^[0-9]+$ ]]; then
         cmd="$LAUNCHER_PATH run $(steam_resolve_appid "$target" || die "no such Steam app")$d"
     else
-        cmd="$LAUNCHER_PATH run $target"
+        cmd="$LAUNCHER_PATH run $target$d"
     fi
     local img; img=$(_app_art "$target" 2>/dev/null || true)
     local tmp; tmp=$(mktemp)
@@ -823,6 +827,8 @@ COMMANDS
   stop                 tear the session down, restore desktop audio + input
   list-games           list installed Steam games
   add-game NAME TARGET add a Sunshine app entry (TARGET = cmd | steam:APPID)
+                       flags: --direct (skip Big Picture) · --gamescope (wrap in
+                       gamescope: real WSI for heavy Vulkan/DX12 titles, FPS cap, FSR)
   audio headset on|off  also play the streamed game on this machine
   audio status|restore  null-sink state / put the desktop default sink back
   logs [analyze]       tail or analyse logs

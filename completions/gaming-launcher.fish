@@ -27,3 +27,6 @@ complete -c gaming-launcher -n "__fish_seen_subcommand_from troubleshoot" -a "ha
 complete -c gaming-launcher -n "__fish_seen_subcommand_from config" -a "show edit path"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from theme" -a "apply revert status"
 complete -c gaming-launcher -n "__fish_seen_subcommand_from logs" -a "analyze"
+complete -c gaming-launcher -n "__fish_seen_subcommand_from add-game run gaming" -l gamescope    -d "wrap the game in gamescope"
+complete -c gaming-launcher -n "__fish_seen_subcommand_from add-game run gaming" -l no-gamescope -d "do not wrap in gamescope"
+complete -c gaming-launcher -n "__fish_seen_subcommand_from add-game run" -l direct -d "launch the game directly (skip Big Picture)"

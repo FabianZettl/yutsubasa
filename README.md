@@ -197,6 +197,23 @@ gaming-launcher add-game "Celeste" steam:504230   # cover art pulled from your S
 # restart the gaming session so Sunshine reloads its app list
 ```
 
+### gamescope wrapper (per game)
+
+Add `--gamescope` to wrap a game in gamescope inside the session:
+
+```sh
+gaming-launcher add-game "FF7 Rebirth" steam:2909400 --direct --gamescope
+```
+
+gamescope gets `-W -H -r` from the connecting client and gives the game a real
+Vulkan **WSI swapchain** (fixes the headless-wlroots black screen for heavy
+Vulkan / DX12-via-Proton titles), an **FPS cap** at the client's rate, optional
+**FSR** upscaling and lower-latency present. It renders into the nested Sway as a
+normal client — the capture path is unchanged. Tune in `gaming-setup.conf`
+`[gamescope]` (`render_scale` for FSR, `grab_cursor`, `rt`, `extra`). Global
+default: `[general] use_gamescope`; override per run with `--gamescope` /
+`--no-gamescope`. Leave it off for emulators / Big Picture / OpenGL games.
+
 Or the GUI — [`steam-sync/`](steam-sync/):
 
 ```sh
@@ -254,14 +271,13 @@ default-sink hijack is reverted continuously while a client is connected.
 
 ## Known limitations
 
-- **Heavy native-Vulkan / DX12-via-Proton titles may render black.** Headless
-  wlroots has no DRM backend, so `zwp_linux_dmabuf_v1` can't hand GPU clients a
-  device (`Failed to get backend DRM FD` in `session.log`). Emulators, Steam Big
-  Picture and lighter / OpenGL games are fine; something like *FF7 Rebirth*
-  (vkd3d-proton) can come up black. Wrapping such a game in **gamescope** is the
-  fix — the plumbing exists (`use_gamescope`, `quality_gamescope_args`) but is
-  **off by default** because gamescope nested in a headless Sway was unstable on
-  older Mesa. Retest per-game.
+- **Heavy native-Vulkan / DX12-via-Proton titles need the gamescope wrapper.**
+  Headless wlroots has no DRM backend, so `zwp_linux_dmabuf_v1` can't hand GPU
+  clients a device (`Failed to get backend DRM FD` in `session.log`) — bare, a
+  title like *FF7 Rebirth* (vkd3d-proton) can come up black. Emulators, Steam Big
+  Picture and lighter / OpenGL games are fine bare. Add such a game with
+  `--gamescope` (see below): gamescope gives it its own WSI swapchain. Verified
+  working nested on wlroots 0.20 + gles2.
 - **Hyprland Lua config is assumed.** On a `.conf` (hyprlang) setup the
   `hl.monitor` / `hl.device` managed blocks and the `hyprctl reload` mechanism
   don't apply.

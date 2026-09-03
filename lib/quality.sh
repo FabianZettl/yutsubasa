@@ -94,21 +94,49 @@ _sun_set() {
     fi
 }
 
-# Build the gamescope command prefix for the active profile.
-# Echoes the argv; empty if gamescope is disabled.
+# Build the gamescope wrapper prefix, or nothing.
+#
+# Wrap when:  `--gamescope` was passed  OR  ([general] use_gamescope = true and
+# no `--no-gamescope`). gamescope gives heavy Vulkan / DX12-via-Proton titles a
+# real WSI swapchain (fixes the headless-wlroots "Failed to get backend DRM FD"
+# black screen), an FPS cap at the client's rate, FSR upscaling and lower-latency
+# present. It renders into the nested Sway as a normal client, so the Sunshine
+# capture path is unchanged. Verified working nested on wlroots 0.20 + gles2.
+#
+# Echoes a space-joined argv ending in `--`; empty string when not wrapping.
 quality_gamescope_args() {
+    case "${OPT_GAMESCOPE:-}" in
+        0) return 0 ;;
+        1) : ;;
+        *) [[ "$(gl_cfg general use_gamescope false)" == true ]] || return 0 ;;
+    esac
+    have gamescope || { warn "gamescope requested but not installed - launching bare"; return 0; }
+
     local p; p=$(state_get .profile); [[ -z "$p" || "$p" == null ]] && p=$(DEFAULT_PROFILE)
-    [[ "$(gl_cfg general use_gamescope true)" == true ]] || return 0
-    have gamescope || { warn "gamescope not installed; launching game without it"; return 0; }
+    local W H F
+    W=$(state_get .width);  [[ "$W" =~ ^[0-9]+$ ]] || W=$(quality_field "$p" max_width 1920)
+    H=$(state_get .height); [[ "$H" =~ ^[0-9]+$ ]] || H=$(quality_field "$p" max_height 1080)
+    F=$(state_get .fps);    [[ "$F" =~ ^[0-9]+$ ]] || F=$(quality_field "$p" max_fps 60)
 
-    local w h f extra
-    w=$(state_get .width);  [[ -z "$w" || "$w" == null ]] && w=$(quality_field "$p" max_width 2560)
-    h=$(state_get .height); [[ -z "$h" || "$h" == null ]] && h=$(quality_field "$p" max_height 1440)
-    f=$(state_get .fps);    [[ -z "$f" || "$f" == null ]] && f=$(quality_field "$p" max_fps 120)
-    extra=$(quality_field "$p" gamescope "")
+    local -a a=(gamescope -W "$W" -H "$H" -r "$F" -f --backend wayland --expose-wayland)
+    [[ "$(gl_cfg gamescope immediate_flips true)" == true ]] && a+=(--immediate-flips)
+    [[ "$(gl_cfg gamescope rt true)"             == true ]] && a+=(--rt)
+    [[ "$(gl_cfg gamescope grab_cursor false)"   == true ]] && a+=(--force-grab-cursor)
 
-    printf 'gamescope -W %s -H %s -r %s -f --backend wayland --expose-wayland %s --' \
-        "$w" "$h" "$f" "$extra"
+    # FSR: render internally at render_scale x client res, upscale to client res
+    local rs; rs=$(gl_cfg gamescope render_scale 1.0)
+    if [[ -n "$rs" && "$rs" != "1.0" && "$rs" != "1" ]]; then
+        local iw ih
+        iw=$(awk -v v="$W" -v s="$rs" 'BEGIN{printf "%d",(v*s)+0.5}')
+        ih=$(awk -v v="$H" -v s="$rs" 'BEGIN{printf "%d",(v*s)+0.5}')
+        (( iw > 0 && ih > 0 && iw < W )) && a+=(-w "$iw" -h "$ih" -F fsr)
+    fi
+
+    local extra; extra=$(gl_cfg gamescope extra ""); [[ -z "$extra" ]] && extra=$(quality_field "$p" gamescope "")
+    # shellcheck disable=SC2206
+    [[ -n "$extra" ]] && a+=($extra)
+    a+=(--)
+    printf '%s ' "${a[@]}"
 }
 
 # The auto-adapter is inert now: there is a single tuned profile, so there is no

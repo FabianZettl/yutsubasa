@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0 (2026-09-03)
+
+- **Per-game gamescope wrapper.** `add-game … --gamescope` (or `run … --gamescope`
+  / `--no-gamescope`, or `[general] use_gamescope`) wraps the game in gamescope
+  inside the session. gamescope gets `-W -H -r` from the connecting client and
+  gives the game its own Vulkan WSI swapchain — **fixes the black screen for
+  heavy native-Vulkan / DX12-via-Proton titles** on headless wlroots — plus an
+  FPS cap at the client's rate, optional FSR (`[gamescope] render_scale`),
+  `--immediate-flips` / `--rt` for lower latency. Renders into the nested Sway as
+  a normal client, so the capture path is unchanged. Verified nested on
+  wlroots 0.20 + gles2 (the old SIGABRT was the Vulkan renderer).
+  New `[gamescope]` config section: `immediate_flips` `rt` `grab_cursor`
+  `render_scale` `extra`.
+
 ## 0.8.1 (2026-09-03)
 
 - **theme: fix the navbar and wordmark.**
