@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1 (2026-09-03)
+
+- **Fix: `status` reported the wrong codec.** `_encoder_codec` still used the
+  pre-0.7.1 inverted reading (`*_mode = 1` as "enabled"). With H.264-only
+  (`av1_mode = 1`, `hevc_mode = 1` = *not advertised*) it printed "AV1". Now
+  reads it right → "H.264 only".
+
 ## 0.10.0 (2026-09-03)
 
 - **Status page** (`bin/gl-status-serve`, `yutsubasa-status.service`,

@@ -26,7 +26,7 @@ source "$LIB/input.sh"
 source "$LIB/steam.sh"
 source "$LIB/theme.sh"
 
-VERSION="0.10.0"
+VERSION="0.10.1"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -641,9 +641,10 @@ _encoder_codec() {
     local av1 hevc
     av1=$(conf_get "$GL_SUNSHINE_CONF" '' av1_mode 0)
     hevc=$(conf_get "$GL_SUNSHINE_CONF" '' hevc_mode 0)
-    [[ "$av1" == 1* ]] && { echo "AV1 (HEVC/H264 fallback)"; return; }
-    [[ "$hevc" == 1* ]] && { echo "HEVC (H264 fallback)"; return; }
-    echo "H264"
+    # Sunshine: *_mode = 1 means "do NOT advertise this codec"; 0/2/3 = advertise
+    [[ "$av1"  != 1 ]] && { echo "AV1 · HEVC · H.264"; return; }
+    [[ "$hevc" != 1 ]] && { echo "HEVC · H.264"; return; }
+    echo "H.264 only"
 }
 
 _vcn_load() {
