@@ -27,12 +27,13 @@ capture = wlr
 # ---- AMD VCN 4.0 encode (RX 7800 XT, single VCN unit) -----------------
 encoder      = vaapi
 adapter_name = /dev/dri/renderD128
-# H.264 only, on purpose: the single VCN sustains it without frame drops and it
-# has the shortest / most consistent hardware decode on phones, handhelds and
-# TVs. mode = 1 means "do NOT advertise this codec" (0 would still offer it).
-# `gaming-launcher quality custom` (codec = hevc / av1) re-enables them.
+# Advertise HEVC + H.264, not AV1. mode = 1 means "do NOT advertise this codec",
+# 0 = offer it. The client negotiates: H.264 stays available for shortest-decode
+# clients, while Android / Qualcomm-decoder handhelds (Artemis on Snapdragon) run
+# measurably smoother on HEVC. `gaming-launcher quality custom` = H.264-only.
+# NB: Sunshine reads these only at startup - no per-client / per-stream switch.
 av1_mode  = 1
-hevc_mode = 1
+hevc_mode = 0
 # Latency-leaning VAAPI rate control (no strict HRD buffer -> encoder never
 # stalls waiting for the rate model to catch up).
 vaapi_strict_rc_buffer = disabled

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.1 (2026-09-03)
+
+- **Gaming instance now advertises HEVC + H.264** (`hevc_mode = 0`, AV1 still
+  off). Each client negotiates: moonlight-qt on the Steam Deck picks what it
+  prefers, and an **Android / Qualcomm-decoder handheld** (Artemis on a
+  Snapdragon) runs measurably smoother on HEVC — tested side by side, same
+  bitrate. `[gaming]` profile `codec = hevc`; the `custom` profile is now the
+  **H.264-only fallback** for any client that regresses. Second-screen instance
+  stays H.264-only (desktop/work use). Codec can't be switched per-client —
+  Sunshine reads `hevc_mode` only at startup.
+
 ## 0.11.0 (2026-09-03)
 
 - **Per-client supersampling.** New `config/clients.conf`, the

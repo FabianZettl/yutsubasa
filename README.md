@@ -168,7 +168,7 @@ There is a single profile, `gaming` (plus `custom` for experiments), fixed for
 
 | | |
 |---|---|
-| **Codec** | **H.264 only** — most predictable on the single VCN, shortest/most consistent hardware decode on phones · handhelds · TVs. HEVC and AV1 are *not* advertised. |
+| **Codec** | **HEVC + H.264** advertised (not AV1); the client negotiates. H.264 stays available for shortest-decode clients; Android / Qualcomm-decoder handhelds (Artemis on Snapdragon) run measurably smoother on HEVC. `quality custom` = H.264-only if a client regresses. |
 | **Resolution / FPS** | whatever the client asks for, used as-is — capped only at 2560×1440 / 144 so nobody requests 4K. No scaling on either end. |
 | **Rate control** | VAAPI, no strict HRD buffer — the encoder never stalls waiting for the rate model. |
 | **Isolation** | audio + input always on. |
@@ -179,7 +179,7 @@ pacing on, HDR off, decoder = hardware.
 
 ```sh
 gaming-launcher quality              # show the active profile
-gaming-launcher quality custom       # scratch profile — set codec = hevc / av1, gamescope args
+gaming-launcher quality custom       # H.264-only fallback (if a client regresses on HEVC)
 ```
 
 Edit `~/.config/gaming-setup/profiles.conf` (`[gaming]` = the real thing,
