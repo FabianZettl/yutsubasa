@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.0 (2026-09-04)
+
+- **Lutris and Heroic games in `add-game` and the status page.** `list-games`,
+  the web Library panel and `add-game` now cover Steam **plus**:
+  - `lutris:<slug>` → `lutris lutris:rungame/<slug>` (reads
+    `~/.local/share/lutris/pga.db`)
+  - `heroic:<appName>` → `heroic --no-gui heroic://launch/<appName>` for Epic /
+    GOG / Amazon titles (reads Heroic's `installed.json`, native or Flatpak;
+    GOG titles cross-referenced from the library cache)
+  New `lib/launchers.sh`. The web panel is now "Library", source-tagged and
+  filterable; `POST /api/add-game` takes `{id: "<source>:<ref>", …}`
+  (the old `{appid}` form still works). Lutris cover art is picked up from
+  `~/.local/share/lutris/coverart/`.
+
 ## 0.11.1 (2026-09-03)
 
 - **Gaming instance now advertises HEVC + H.264** (`hevc_mode = 0`, AV1 still

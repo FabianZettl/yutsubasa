@@ -192,10 +192,17 @@ auto step-down adapter are gone — switching profiles mid-session re-writes
 ## Adding games
 
 ```sh
-gaming-launcher list-games
-gaming-launcher add-game "Celeste" steam:504230   # cover art pulled from your Steam library
+gaming-launcher list-games                        # Steam · Lutris · Heroic, one list
+gaming-launcher add-game "Celeste" steam:504230   # cover art from your Steam library
+gaming-launcher add-game "Crimson Desert" lutris:crimson-desert
+gaming-launcher add-game "Cyberpunk 2077" heroic:1423049311   # Epic / GOG / Amazon via Heroic
 # restart the gaming session so Sunshine reloads its app list
 ```
+
+`TARGET` is `steam:<appid>`, `lutris:<slug>`, `heroic:<appName>`, or a raw command.
+Lutris reads `~/.local/share/lutris/pga.db`; Heroic reads its `installed.json`
+files (native or Flatpak). They launch in the session like any other app — audio
+and input routing are unchanged.
 
 ### Per-client supersampling
 
@@ -364,11 +371,12 @@ default-sink hijack is reverted continuously while a client is connected.
 http://localhost:47992
 ```
 
-Live `gaming-launcher status` + `troubleshoot` output, plus a **Steam-library
-panel** — every installed game with an **Add** button that runs
-`gaming-launcher add-game` (with `--direct` / `--gamescope` toggles) and a
-"reload apps.json" button. Covers the same ground as `steam-sync/` without a
-desktop app.
+Live `gaming-launcher status` + `troubleshoot` output, plus a **Library
+panel** — every installed game from **Steam, Lutris and Heroic** (source-tagged,
+filterable) with an **Add** button that runs `gaming-launcher add-game` (with
+`--direct` / `--gamescope` toggles) and a "reload apps.json" button. Plus a
+**Clients** panel for per-client supersampling. Covers the same ground as
+`steam-sync/` without a desktop app.
 
 `gaming-setup.conf` `[status]`: `port` (47992), `bind` — `loopback` (host only,
 default) or `lan` (reachable from the LAN, then `token` is **required** and any

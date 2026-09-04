@@ -12,7 +12,7 @@ complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "audio
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "status"       -d "session status"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "stop"         -d "tear everything down"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "list-games"   -d "installed Steam games"
-complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "add-game"     -d "add a Sunshine app entry"
+complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "add-game"     -d "add a Sunshine app entry (steam:/lutris:/heroic:)"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "logs"         -d "tail/analyse logs"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "benchmark"    -d "VA-API / capture probe"
 complete -c gaming-launcher -n "not __fish_seen_subcommand_from $cmds" -a "troubleshoot" -d "run diagnostics"

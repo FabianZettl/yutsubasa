@@ -25,9 +25,10 @@ source "$LIB/quality.sh"
 source "$LIB/clients.sh"
 source "$LIB/input.sh"
 source "$LIB/steam.sh"
+source "$LIB/launchers.sh"
 source "$LIB/theme.sh"
 
-VERSION="0.11.1"
+VERSION="0.12.0"
 LAUNCHER_PATH="$(command -v gaming-launcher || echo "$_self")"
 
 # =======================================================================
@@ -173,6 +174,7 @@ _resolve_game_cmd() {
         steam|bigpicture)  steam_bigpicture_cmd ;;
         desktop)           echo "${TERMINAL:-foot}" ;;
         steam:*|[0-9]*)    steam_app_cmd "$(steam_resolve_appid "$what" || die "no Steam app matches '$what'")" "$([[ ${OPT_DIRECT:-0} == 1 ]] && echo direct || echo bigpicture)" ;;
+        lutris:*|heroic:*) launcher_resolve "$what" || die "bad launcher target '$what'" ;;
         *)
             # a named entry in apps.json? else treat as a raw command
             local c
@@ -700,12 +702,27 @@ cmd_audio() {
 }
 
 cmd_list_games() {
-    steam_list_games | awk -F'\t' '{printf "  %-8s %s\n",$1,$2}'
+    { steam_list_games | awk -F'\t' '{printf "steam:%s\t%s\n",$1,$2}'
+      lutris_list_games
+      heroic_list_games
+    } | awk -F'\t' 'NF>=2 {printf "  %-28s %s\n",$1,$2}'
 }
 
 # resolve a box-art PNG for an app; echoes a path or ""
-_app_art() {  # _app_art <target>   target = steam:APPID | APPID | <binary/cmd>
+_app_art() {  # _app_art <target>   target = steam:APPID | APPID | lutris:SLUG | heroic:APP | <binary/cmd>
     local t=$1 appid img
+    if [[ "$t" == lutris:* ]]; then
+        local slug=${t#lutris:}
+        for img in "$HOME/.local/share/lutris/coverart/$slug.jpg" \
+                   "$HOME/.cache/lutris/coverart/$slug.jpg" \
+                   "$HOME/.local/share/lutris/banners/$slug.jpg"; do
+            [[ -f "$img" ]] && { art_png "$img" "lutris-$slug" && return 0; }
+        done
+        art_png /usr/share/sunshine/box.png "box"; return $?
+    fi
+    if [[ "$t" == heroic:* ]]; then
+        art_png /usr/share/sunshine/box.png "box"; return $?
+    fi
     if [[ "$t" == steam:* || "$t" =~ ^[0-9]+$ ]]; then
         appid=${t#steam:}
         for f in library_600x900.jpg library_600x900_2x.jpg logo.png header.jpg; do
@@ -734,8 +751,8 @@ _app_art() {  # _app_art <target>   target = steam:APPID | APPID | <binary/cmd>
 
 cmd_add_game() {
     parse_opts "$@"
-    local name="${GL_POS[0]:?usage: add-game <name> <cmd|steam:APPID>}"
-    local target="${GL_POS[1]:?usage: add-game <name> <cmd|steam:APPID>}"
+    local name="${GL_POS[0]:?usage: add-game <name> <cmd|steam:APPID|lutris:SLUG|heroic:APP>}"
+    local target="${GL_POS[1]:?usage: add-game <name> <cmd|steam:APPID|lutris:SLUG|heroic:APP>}"
     need jq
     local cmd d=""
     (( OPT_DIRECT )) && d+=" --direct"
@@ -744,6 +761,9 @@ cmd_add_game() {
     # no --profile: there is one tuned profile; `run` picks it up from state/config.
     if [[ "$target" == steam:* || "$target" =~ ^[0-9]+$ ]]; then
         cmd="$LAUNCHER_PATH run $(steam_resolve_appid "$target" || die "no such Steam app")$d"
+    elif launcher_is_target "$target"; then
+        launcher_resolve "$target" >/dev/null || die "bad launcher target '$target'"
+        cmd="$LAUNCHER_PATH run $target$d"
     else
         cmd="$LAUNCHER_PATH run $target$d"
     fi
@@ -882,8 +902,9 @@ COMMANDS
   status               show session / encoder / client state
                        (also a live web page: http://localhost:47992 — yutsubasa-status.service)
   stop                 tear the session down, restore desktop audio + input
-  list-games           list installed Steam games
-  add-game NAME TARGET add a Sunshine app entry (TARGET = cmd | steam:APPID)
+  list-games           list installed games (Steam · Lutris · Heroic)
+  add-game NAME TARGET add a Sunshine app entry
+                       TARGET = cmd | steam:APPID | lutris:SLUG | heroic:APP
                        flags: --direct (skip Big Picture) · --gamescope (wrap in
                        gamescope: real WSI for heavy Vulkan/DX12 titles, FPS cap, FSR)
   audio headset on|off  also play the streamed game on this machine

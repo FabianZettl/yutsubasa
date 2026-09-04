@@ -4,9 +4,10 @@
 A tiny stdlib HTTP server:
   GET  /                 themed status page (auto-refresh)
   GET  /api/status       plain `gaming-launcher status` + `troubleshoot`
-  GET  /api/games        installed Steam games + which are already added
+  GET  /api/games        installed games (Steam, Lutris, Heroic) + which are added
   GET  /api/clients      paired devices + their supersampling settings
-  POST /api/add-game     {appid,name,direct,gamescope}  -> gaming-launcher add-game
+  POST /api/add-game     {id,name,direct,gamescope}  -> gaming-launcher add-game
+                         id = steam:<appid> | lutris:<slug> | heroic:<appName>
   POST /api/client       {name,factor,match,enabled}    -> gaming-launcher clients
   POST /api/reload       restart sunshine-gaming so it reloads apps.json
 
@@ -83,20 +84,31 @@ def library_paths(root):
     return paths or [root]
 
 
-def added_appids():
+def added_targets():
+    """Every 'run <target>' argument already in apps.json, plus steam:<id> forms."""
     try:
         data = json.load(open(APPS))
-        cmds = " ".join(a.get("cmd", "") for a in data.get("apps", []))
-        return set(re.findall(r"(?:steam:|rungameid/)(\d+)", cmds))
     except (OSError, ValueError):
         return set()
+    out = set()
+    for a in data.get("apps", []):
+        cmd = a.get("cmd", "")
+        m = re.search(r"\brun\s+(\S+)", cmd)
+        if m:
+            tgt = m.group(1)
+            out.add(tgt)
+            if tgt.isdigit():
+                out.add("steam:" + tgt)
+        for sid in re.findall(r"(?:steam:|rungameid/)(\d+)", cmd):
+            out.add("steam:" + sid)
+    return out
 
 
 def steam_games():
     root = steam_root()
     if not root:
         return []
-    added = added_appids()
+    added = added_targets()
     seen, out = set(), []
     for lib in library_paths(root):
         d = os.path.join(lib, "steamapps")
@@ -124,9 +136,98 @@ def steam_games():
             if low.startswith(("proton", "steam linux runtime", "steamworks common",
                                "steamvr", "steam controller")):
                 continue
-            out.append({"appid": appid, "name": name, "added": appid in added})
+            gid = "steam:" + appid
+            out.append({"id": gid, "appid": appid, "name": name, "source": "steam",
+                        "added": gid in added or appid in added})
     out.sort(key=lambda g: g["name"].lower())
     return out
+
+
+def lutris_games():
+    db = os.path.join(HOME, ".local/share/lutris/pga.db")
+    if not os.path.isfile(db):
+        return []
+    added = added_targets()
+    out = []
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        rows = con.execute(
+            "SELECT slug, name FROM games WHERE installed=1 AND slug IS NOT NULL AND slug<>''"
+        ).fetchall()
+        con.close()
+    except Exception:
+        return []
+    for slug, name in rows:
+        gid = "lutris:" + slug
+        out.append({"id": gid, "name": name or slug, "source": "lutris",
+                    "added": gid in added})
+    out.sort(key=lambda g: g["name"].lower())
+    return out
+
+
+def _heroic_cfg():
+    for p in (os.path.join(HOME, ".config/heroic"),
+              os.path.join(HOME, ".var/app/com.heroicgameslauncher.hgl/config/heroic")):
+        if os.path.isdir(p):
+            return p
+    return None
+
+
+def heroic_games():
+    cfg = _heroic_cfg()
+    if not cfg:
+        return []
+    added = added_targets()
+    found = {}  # appName -> title
+
+    epic = os.path.join(cfg, "legendaryConfig/legendary/installed.json")
+    try:
+        d = json.load(open(epic))
+        for k, v in d.items():
+            found[k] = (v.get("title") or k) if isinstance(v, dict) else k
+    except (OSError, ValueError):
+        pass
+
+    gog_inst = os.path.join(cfg, "gog_store/installed.json")
+    try:
+        inst = json.load(open(gog_inst)).get("installed", [])
+        titles = {}
+        try:
+            libjson = json.load(open(os.path.join(cfg, "store_cache/gog_library.json")))
+            games = libjson.get("games", libjson) if isinstance(libjson, dict) else libjson
+            for g in (games or []):
+                if isinstance(g, dict):
+                    titles[str(g.get("app_name") or g.get("appName"))] = g.get("title")
+        except (OSError, ValueError):
+            pass
+        for g in inst:
+            an = str(g.get("appName"))
+            found.setdefault(an, titles.get(an) or an)
+    except (OSError, ValueError):
+        pass
+
+    for nile in (os.path.join(cfg, "nile_config/nile/installed.json"),):
+        try:
+            d = json.load(open(nile))
+            items = d if isinstance(d, list) else d.get("installed", [])
+            for g in items:
+                an = str(g.get("id") or g.get("appName"))
+                found.setdefault(an, g.get("name") or g.get("title") or an)
+        except (OSError, ValueError):
+            pass
+
+    out = []
+    for an, title in found.items():
+        gid = "heroic:" + an
+        out.append({"id": gid, "name": title or an, "source": "heroic",
+                    "added": gid in added})
+    out.sort(key=lambda g: g["name"].lower())
+    return out
+
+
+def library_games():
+    return steam_games() + lutris_games() + heroic_games()
 
 
 def status_text():
@@ -194,6 +295,11 @@ overflow:auto;white-space:pre-wrap}}
 .game{{display:flex;align-items:center;gap:.6rem;background:var(--surf);border:1px solid var(--bd);
 border-radius:.5rem;padding:.5rem .7rem;margin:.3rem 0}}
 .game .n{{flex:1}}.game .id{{color:var(--mut);font-size:.8rem}}
+.game .src{{font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;padding:.1rem .4rem;
+border-radius:.3rem;border:1px solid var(--bd);color:var(--mut)}}
+.game .src[data-s=steam]{{color:#66c0f4;border-color:#2a475e}}
+.game .src[data-s=lutris]{{color:#ff9f1c;border-color:#5a3d16}}
+.game .src[data-s=heroic]{{color:#c79bff;border-color:#40305a}}
 button{{background:var(--te);color:#04211f;border:0;border-radius:.4rem;padding:.35rem .8rem;
 font-weight:600;cursor:pointer}}
 button.sec{{background:transparent;color:var(--mut);border:1px solid var(--bd)}}
@@ -207,12 +313,13 @@ border-radius:.35rem;padding:.28rem .4rem;font:inherit}}
 <h1><b>yutsubasa</b> &nbsp;status</h1>
 <p class=muted>auto-refresh 8s &middot; <span id=t></span></p>
 <pre id=st>loading…</pre>
-<h2>Steam library</h2>
+<h2>Library &middot; Steam · Lutris · Heroic</h2>
 <div class=bar>
   <label><input type=checkbox id=direct checked> --direct</label>
   <label><input type=checkbox id=gs> --gamescope</label>
   <button class=sec id=reload>reload apps.json (restart :47989)</button>
 </div>
+<input id=gfilter placeholder="filter…" style="width:100%;margin:.3rem 0">
 <div id=games class=muted>loading…</div>
 <h2>Clients &middot; supersampling</h2>
 <p class=muted>render the session above the device's resolution, transport at it (SSAA -
@@ -226,12 +333,14 @@ async function load(){{
  try{{
   document.getElementById('st').textContent=await (await fetch('api/status')).text();
   const gs=await (await fetch('api/games')).json();
-  document.getElementById('games').innerHTML = gs.length? gs.map(g=>
+  const f=(document.getElementById('gfilter').value||'').toLowerCase();
+  const shown=gs.filter(g=>!f||g.name.toLowerCase().includes(f)||g.source.includes(f));
+  document.getElementById('games').innerHTML = shown.length? shown.map(g=>
    `<div class=game><span class=n>${{g.name}}</span>`+
-   `<span class=id>${{g.appid}}</span>`+
+   `<span class=src data-s="${{g.source}}">${{g.source}}</span>`+
    (g.added?`<button disabled>added</button>`:
-    `<button data-id="${{g.appid}}" data-n="${{g.name.replace(/"/g,'&quot;')}}">add</button>`)+
-   `</div>`).join('') : 'no Steam library found';
+    `<button data-id="${{g.id}}" data-n="${{g.name.replace(/"/g,'&quot;')}}">add</button>`)+
+   `</div>`).join('') : (gs.length? 'no match' : 'no games found');
   await loadClients();
   document.getElementById('t').textContent=new Date().toLocaleTimeString();
  }}catch(e){{document.getElementById('st').textContent='server unreachable';}}
@@ -240,7 +349,7 @@ document.getElementById('games').addEventListener('click',async e=>{{
  const b=e.target.closest('button[data-id]'); if(!b) return;
  b.disabled=true; b.textContent='…';
  const r=await fetch('api/add-game',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-  body:JSON.stringify({{token:TOKEN,appid:b.dataset.id,name:b.dataset.n,
+  body:JSON.stringify({{token:TOKEN,id:b.dataset.id,name:b.dataset.n,
    direct:document.getElementById('direct').checked,
    gamescope:document.getElementById('gs').checked}})}});
  b.textContent = r.ok? 'added' : 'error'; setTimeout(load,600);
@@ -277,6 +386,9 @@ document.getElementById('clients').addEventListener('click',async e=>{{
  b.textContent=r.ok?'saved':'error';
  setTimeout(()=>{{b.disabled=false;b.textContent='save';load();}},900);
 }});
+document.getElementById('gfilter').addEventListener('input',()=>{{
+ clearTimeout(window._gf); window._gf=setTimeout(load,200);
+}});
 load(); setInterval(load,8000);
 </script></body></html>"""
 
@@ -304,7 +416,7 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             self._send(200, status_text())
         elif self.path == "/api/games":
-            self._send(200, json.dumps(steam_games()), "application/json")
+            self._send(200, json.dumps(library_games()), "application/json")
         elif self.path == "/api/clients":
             self._send(200, json.dumps(clients_list()), "application/json")
         else:
@@ -319,11 +431,14 @@ class H(BaseHTTPRequestHandler):
         if not self._auth(payload):
             self._send(403, "forbidden (bad token)"); return
         if self.path == "/api/add-game":
-            appid = str(payload.get("appid", "")).strip()
-            name = str(payload.get("name", "")).strip() or appid
-            if not appid.isdigit():
-                self._send(400, "bad appid"); return
-            args = [LAUNCHER, "add-game", name, f"steam:{appid}"]
+            target = str(payload.get("id", "")).strip()
+            if not target:
+                appid = str(payload.get("appid", "")).strip()
+                target = f"steam:{appid}" if appid.isdigit() else ""
+            name = str(payload.get("name", "")).strip() or target
+            if not re.match(r"^(steam:\d+|lutris:[\w.-]+|heroic:[\w:.@-]+)$", target):
+                self._send(400, "bad target"); return
+            args = [LAUNCHER, "add-game", name, target]
             if payload.get("direct"):
                 args.append("--direct")
             if payload.get("gamescope"):
